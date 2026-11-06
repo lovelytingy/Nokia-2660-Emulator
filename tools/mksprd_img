@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BIN="$PROJECT_ROOT/target/release/mksprd_img"
+
+if [ ! -f "$BIN" ]; then
+    cargo build --release --manifest-path "$PROJECT_ROOT/Cargo.toml" --bin mksprd_img >/dev/null || exit 1
+fi
+
+exec "$BIN" "$@"

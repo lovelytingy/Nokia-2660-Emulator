@@ -1,1 +1,12 @@
-../tools/n2660emu.py
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# N2660Emu: Unified Nokia 2660 Flip Hardware Emulator CLI Launcher
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BIN="$PROJECT_ROOT/target/release/n2660emu-rs"
+
+if [ ! -f "$BIN" ]; then
+    cargo build --release --manifest-path "$PROJECT_ROOT/Cargo.toml" --bin n2660emu-rs >/dev/null || exit 1
+fi
+
+exec "$BIN" "$@"

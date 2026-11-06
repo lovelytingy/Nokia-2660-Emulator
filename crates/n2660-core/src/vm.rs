@@ -269,6 +269,10 @@ impl T107Vm {
         Ok(())
     }
 
+    pub fn set_entry_point(&mut self, entry_point: u64) -> Result<(), String> {
+        self.init_cpu(entry_point)
+    }
+
     pub fn setup_atags(&mut self, atags_addr: u64, board_id: u32, cmdline: Option<String>) -> Result<(), String> {
         let builder = AtagsBuilder::new().with_cmdline(cmdline);
         let tags_bytes = builder.build();
@@ -310,12 +314,28 @@ impl T107Vm {
         changed
     }
 
+    pub fn press_key(&mut self, key: &str) -> bool {
+        self.inject_key(key, true)
+    }
+
+    pub fn release_key(&mut self, key: &str) -> bool {
+        self.inject_key(key, false)
+    }
+
     pub fn set_flip_state(&mut self, is_open: bool) {
         self.uc.get_data_mut().gpio.set_flip_state(is_open);
     }
 
     pub fn is_flip_open(&self) -> bool {
         self.uc.get_data().gpio.is_flip_open()
+    }
+
+    pub fn get_gc9307_framebuffer(&self) -> &[[u16; GC9307_WIDTH]; GC9307_HEIGHT] {
+        &self.uc.get_data().display.gc9307.framebuffer
+    }
+
+    pub fn get_st7735_framebuffer(&self) -> &[[u16; ST7735_WIDTH]; ST7735_HEIGHT] {
+        &self.uc.get_data().display.st7735.framebuffer
     }
 
     pub fn get_pc(&self) -> u32 {

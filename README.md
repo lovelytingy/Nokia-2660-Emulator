@@ -120,25 +120,12 @@ Nokia-2660-Emulator/
 │   │   ├── kpd.c                # Baremetal Keypad and Hall flip sensor driver
 │   │   ├── linker.ld            # Linker script targeting T107 memory map (with 4 KB IRQ stack)
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
-│   └── unit/
-│       ├── test_desktop_gui.py  # Native desktop GUI, Cairo phone skin & hit-testing tests
-│       ├── test_gui_runner.py   # Interactive GUI, downsampling, key injection & headless tests
-│       ├── test_intc.py         # SPRD INTC registers, soft IRQ, FIQ routing & vector tests
-│       ├── test_atags.py        # ARM Boot Tags synthesizer, parser & handoff tests
-│       ├── test_bootrom.py      # BootROM reset vector, BOOT0 packaging & boot flow tests
-│       ├── test_pac_extractor.py # Unisoc .PAC packaging, extraction & XML tests
-│       ├── test_memory_map.py   # Automated memory map & peripheral tests
-│       └── test_bsl_protocol.py # BSL protocol framing, CRC16, and FDL loader tests
 ├── tools/
-│   ├── desktop_gui.py           # Native Desktop Host GUI with authentic Nokia 2660 Flip skin
-│   ├── gui_runner.py            # Interactive Real-Time Terminal GUI & Keypad Runner
-│   ├── n2660emu.py              # Unified CLI emulator launcher
-│   ├── unicorn_runner.py        # Unicorn VM runner with exact T107 MMIO
-│   ├── atags.py                 # ARM Boot Tags (ATAGS) generator & inspector
-│   ├── mksprd_img.py            # Unisoc SPRD BOOT0 image packaging & NAND flash utility
-│   ├── bsl_engine.py            # Spreadtrum BSL protocol engine (Client & Server)
-│   ├── pac_extractor.py         # Spreadtrum .PAC vendor firmware extractor
-│   └── disasm.py                # Capstone disassembler with T107 annotations
+│   ├── atags                    # ARM Boot Tags generator & inspector (Rust)
+│   ├── bsl_engine               # Spreadtrum BSL protocol engine (Rust)
+│   ├── disasm                   # Capstone disassembler with T107 annotations (Rust)
+│   ├── mksprd_img               # Unisoc SPRD BOOT0 image packager (Rust)
+│   └── pac_extractor            # Spreadtrum .PAC firmware container extractor (Rust)
 ├── Makefile                     # Root build & test Makefile
 └── README.md                    # Project documentation
 ```
@@ -150,15 +137,13 @@ Nokia-2660-Emulator/
 ### Prerequisites
 
 - **Host OS**: macOS (Apple Silicon or Intel) or Linux.
-- **Rust Toolchain**: `rustc` and `cargo` (1.75+ recommended for zero-cost FFI & native engine).
+- **Rust Toolchain**: `rustc` and `cargo` (1.75+ recommended).
 - **ARM Toolchain**: `arm-none-eabi-gcc`, `arm-none-eabi-ld`, `arm-none-eabi-objcopy`.
-- **Python 3**: with `capstone` and `unicorn`.
 - **QEMU**: `qemu-system-arm`.
 
 On macOS with Homebrew:
 ```bash
 brew install qemu arm-none-eabi-gcc rust
-pip3 install capstone unicorn
 ```
 
 ---
@@ -271,8 +256,6 @@ Launch the real-time terminal user interface featuring 24-bit ANSI Truecolor dua
 make interactive
 # or via CLI launcher:
 ./bin/n2660emu -i
-# or with dual-display mode:
-./tools/gui_runner.py tests/baremetal/interactive_demo.bin --view dual
 ```
 
 **Controls in Interactive Mode**:
@@ -302,10 +285,10 @@ Execute the clean-room ARMv7-A BootROM starting at the reset vector (`0x00000000
 ```
 
 ### 6. Package Raw Binaries into Unisoc SPRD BOOT0 Containers
-Use `tools/mksprd_img.py` to wrap any baremetal payload with standard 32-byte SPRD headers:
+Use `tools/mksprd_img` to wrap any baremetal payload with standard 32-byte SPRD headers:
 ```bash
-python3 tools/mksprd_img.py create -i payload.bin -o boot0.bin --load-addr 0x00006200 --entry 0x00006200
-python3 tools/mksprd_img.py verify boot0.bin
+./tools/mksprd_img create -i payload.bin -o boot0.bin --load-addr 0x00006200 --entry 0x00006200
+./tools/mksprd_img verify boot0.bin
 ```
 
 ### 7. Simulate Keypad Input and Flip Opening / Closing
@@ -391,23 +374,23 @@ For complete architecture, memory-safety considerations, and benchmark methodolo
 ## Reverse Engineering Tools
 
 ### Unpacking & Building Official Nokia `.PAC` Firmware
-N2660Emu provides [`tools/pac_extractor.py`](file:///Users/lovelytingy/Documents/Personal-Projects/Nokia-2660-Emulator/tools/pac_extractor.py) to parse, unpack, inspect, and package Spreadtrum `.PAC` firmware archives:
+N2660Emu provides [`tools/pac_extractor`](tools/pac_extractor) to parse, unpack, inspect, and package Spreadtrum `.PAC` firmware archives:
 
 ```bash
 # 1. List partition records, load addresses, and sizes:
-./tools/pac_extractor.py list <firmware.pac>
+./tools/pac_extractor list <firmware.pac>
 
 # 2. Extract all partition images (FDL1, FDL2, BOOT0, BOOT1, KERNEL, SYSTEM):
-./tools/pac_extractor.py extract <firmware.pac> -o extracted_fw/
+./tools/pac_extractor extract <firmware.pac> -o extracted_fw/
 
 # 3. Extract a single partition by ID:
-./tools/pac_extractor.py extract <firmware.pac> --id FDL1 -o extracted_fw/
+./tools/pac_extractor extract <firmware.pac> --id FDL1 -o extracted_fw/
 
 # 4. Dump flash geometry and partition layout XML:
-./tools/pac_extractor.py dump-xml <firmware.pac>
+./tools/pac_extractor dump-xml <firmware.pac>
 
 # 5. Build a custom .PAC firmware archive:
-./tools/pac_extractor.py pack -o custom.pac --name "Nokia 2660 Flip" \
+./tools/pac_extractor pack -o custom.pac --name "Nokia 2660 Flip" \
     -f FDL1:build/fdl1.bin:0x00006200 \
     -f FDL2:build/fdl2.bin:0x80100000 \
     -f BOOT0:build/boot0.bin:0x00006200
@@ -421,14 +404,14 @@ You can pass vendor `.PAC` containers directly to the emulator launcher:
 The launcher will automatically unpack the container, stage `FDL1` into SRAM (`0x00006200`), stage `FDL2` into DRAM (`0x80100000`), perform the Spreadtrum BSL handshake over UART0, and boot the virtual machine.
 
 ### ARM Boot Tags (ATAGS) & Kernel Handoff
-N2660Emu includes full support for the standard ARM Linux / MOCOR OS boot protocol with [`tools/atags.py`](file:///Users/lovelytingy/Documents/Personal-Projects/Nokia-2660-Emulator/tools/atags.py):
+N2660Emu includes full support for the standard ARM Linux / MOCOR OS boot protocol with [`tools/atags`](tools/atags):
 
 ```bash
 # 1. Synthesize binary ATAGS list:
-python3 tools/atags.py build -o atags.bin --cmdline "console=ttyS0,115200 root=/dev/mtdblock3 ro mem=48M"
+./tools/atags build -o atags.bin --cmdline "console=ttyS0,115200 root=/dev/mtdblock3 ro mem=48M"
 
 # 2. Inspect an existing ATAGS binary:
-python3 tools/atags.py inspect atags.bin
+./tools/atags inspect atags.bin
 
 # 3. Boot an OS kernel image with automatic ATAGS staging & register setup (r0=0, r1=0x9117, r2=0x80000100):
 ./bin/n2660emu zImage --entry 0x80008000 --atags --cmdline "console=ttyS0,115200 root=/dev/mtdblock3 ro mem=48M"

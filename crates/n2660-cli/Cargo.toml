@@ -16,3 +16,5 @@ clap = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
 byteorder = { workspace = true }
+minifb = "0.29.0"
+crossterm = "0.29.0"

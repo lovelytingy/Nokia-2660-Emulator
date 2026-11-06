@@ -30,13 +30,19 @@ impl SprdIntc {
     pub fn assert_irq(&mut self, irq: u32) {
         if irq < 32 {
             self.irq_raw_sts |= 1 << irq;
+            self.fiq_raw_sts |= 1 << irq;
         }
     }
 
     pub fn deassert_irq(&mut self, irq: u32) {
         if irq < 32 {
             self.irq_raw_sts &= !(1 << irq);
+            self.fiq_raw_sts &= !(1 << irq);
         }
+    }
+
+    pub fn clear_irq(&mut self, irq: u32) {
+        self.deassert_irq(irq);
     }
 
     pub fn read(&self, offset: u32) -> u32 {

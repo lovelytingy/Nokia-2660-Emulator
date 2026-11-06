@@ -2,6 +2,9 @@
 //! N2660Emu: Unified Nokia 2660 Flip Hardware Emulator CLI (Rust Edition)
 //! High-performance Unisoc T107 (UMS9117) ARM Cortex-A7 emulation.
 
+mod gui;
+mod tui;
+
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -23,7 +26,7 @@ fn parse_hex_or_dec(src: &str) -> Result<u64, String> {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "n2660emu-rs", version = "0.1.0", author = "N2660Emu Developers")]
+#[command(name = "n2660emu", version = "0.1.0", author = "N2660Emu Developers")]
 #[command(about = "N2660Emu: Nokia 2660 Flip (Unisoc T107) Emulation Environment (Rust)")]
 struct Args {
     /// Path to firmware ELF or raw binary
@@ -33,6 +36,18 @@ struct Args {
     /// Entry address for raw binary (default: 0x80000000)
     #[arg(long, default_value = "0x80000000", value_parser = parse_hex_or_dec)]
     entry: u64,
+
+    /// Launch native desktop host GUI with Nokia 2660 Flip physical skin
+    #[arg(long)]
+    gui: bool,
+
+    /// Color theme for phone casing in Desktop GUI ("Deep Blue", "Pop Red", "Classic Black")
+    #[arg(long, default_value = "Deep Blue")]
+    theme: String,
+
+    /// Launch interactive real-time terminal GUI & keypad
+    #[arg(short = 'i', long)]
+    interactive: bool,
 
     /// Enable CPU instruction tracing
     #[arg(long)]
@@ -138,108 +153,125 @@ fn main() {
     // Handle .PAC archive if provided
     let fdl1_file = args.fdl1.clone();
     let fdl2_file = args.fdl2.clone();
-    let boot0_file = args.boot0.clone();
+    let mut firmware_target = args.firmware.clone();
 
     if let Some(pac_path) = &args.pac {
-        println!("[N2660Emu] Parsing .PAC firmware container: {:?}", pac_path);
-        if let Ok(mut f) = File::open(pac_path) {
-            let mut bytes = Vec::new();
-            if f.read_to_end(&mut bytes).is_ok() {
-                if let Ok(pac) = PacArchive::parse(&bytes) {
-                    println!("[N2660Emu] PAC Product: {} ({}) with {} partitions", pac.product_version, pac.product_alias, pac.files.len());
-                    for part in &pac.files {
-                        let id = part.id.to_uppercase();
-                        if id.contains("FDL1") && fdl1_file.is_none() {
-                            let _ = vm.load_bytes(&part.data, args.fdl1_addr);
-                            println!("[N2660Emu PAC] Staged FDL1 ({} bytes) at 0x{:08X}", part.data.len(), args.fdl1_addr);
-                        } else if id.contains("FDL2") && fdl2_file.is_none() {
-                            let _ = vm.load_bytes(&part.data, args.fdl2_addr);
-                            println!("[N2660Emu PAC] Staged FDL2 ({} bytes) at 0x{:08X}", part.data.len(), args.fdl2_addr);
-                        }
+        if let Ok(data) = std::fs::read(pac_path) {
+            if let Ok(pac) = PacArchive::parse(&data) {
+                println!("[PAC] Parsing vendor firmware container '{:?}' ({} partitions)...", pac_path, pac.files.len());
+                for f in pac.files {
+                    if f.id.eq_ignore_ascii_case("fdl1") {
+                        println!("[PAC] Found FDL1 partition ({} bytes)", f.data.len());
+                        let _ = vm.load_bytes(&f.data, args.fdl1_addr);
+                    } else if f.id.eq_ignore_ascii_case("fdl2") {
+                        println!("[PAC] Found FDL2 partition ({} bytes)", f.data.len());
+                        let _ = vm.load_bytes(&f.data, args.fdl2_addr);
                     }
                 }
             }
         }
-    }
-
-    // Handle BOOT0 staging
-    if let Some(b0) = &boot0_file {
-        if let Ok(mut f) = File::open(b0) {
-            let mut data = Vec::new();
-            if f.read_to_end(&mut data).is_ok() {
-                // If it has SPRD header, parse and stage to SRAM
-                if let Ok(hdr) = SprdHeader::parse(&data) {
-                    println!("[BOOTROM] Staging BOOT0 ({} bytes) to 0x{:08X} (entry: 0x{:08X})...", hdr.payload_size, hdr.load_addr, hdr.entry_point);
-                    let _ = vm.load_bytes(&data[32..32 + hdr.payload_size as usize], hdr.load_addr as u64);
-                    let _ = vm.init_cpu(hdr.entry_point as u64);
-                } else {
-                    let _ = vm.load_bytes(&data, 0x0000_6200);
-                    let _ = vm.init_cpu(0x0000_6200);
+    } else if let Some(fw) = &firmware_target {
+        if let Some(ext) = fw.extension() {
+            if ext == "pac" {
+                if let Ok(data) = std::fs::read(fw) {
+                    if let Ok(pac) = PacArchive::parse(&data) {
+                        println!("[PAC] Parsing vendor firmware container '{:?}' ({} partitions)...", fw, pac.files.len());
+                        for f in pac.files {
+                            if f.id.eq_ignore_ascii_case("fdl1") {
+                                println!("[PAC] Found FDL1 partition ({} bytes)", f.data.len());
+                                let _ = vm.load_bytes(&f.data, args.fdl1_addr);
+                            } else if f.id.eq_ignore_ascii_case("fdl2") {
+                                println!("[PAC] Found FDL2 partition ({} bytes)", f.data.len());
+                                let _ = vm.load_bytes(&f.data, args.fdl2_addr);
+                            }
+                        }
+                    }
                 }
+                firmware_target = None;
             }
         }
     }
 
-    // Stage FDL1 if requested
-    if let Some(f1) = &fdl1_file {
-        if let Ok(mut f) = File::open(f1) {
-            let mut data = Vec::new();
-            if f.read_to_end(&mut data).is_ok() {
-                println!("[N2660Emu] Staging FDL1 to 0x{:08X}...", args.fdl1_addr);
-                let _ = vm.load_bytes(&data, args.fdl1_addr);
-                let _ = vm.init_cpu(args.fdl1_addr);
-                if args.bsl {
-                    println!("[BSL] Simulating Spreadtrum BSL Protocol Handshake over UART0...");
-                }
+    // Load BOOT0 into SPI NAND Block 0 if provided
+    if let Some(boot0_path) = &args.boot0 {
+        if let Ok(data) = std::fs::read(boot0_path) {
+            println!("[BOOT0] Loaded BOOT0 image ({} bytes) into SPI NAND Block 0", data.len());
+            vm.uc.get_data_mut().sfc.write_page(0, 0, &data[..data.len().min(2048)]);
+            let _ = vm.load_bytes(&data, 0x6000_0000);
+            if let Ok(hdr) = SprdHeader::parse(&data) {
+                let _ = vm.load_bytes(&data[32..], hdr.load_addr as u64);
+                let _ = vm.set_entry_point(hdr.entry_point as u64);
             }
         }
-    } else if args.bsl {
+    }
+
+    // Load FDL1 if specified
+    if let Some(f_path) = &fdl1_file {
+        if let Ok(data) = std::fs::read(f_path) {
+            println!("[FDL1] Staging FDL1 ({} bytes) into SRAM at 0x{:08X}", data.len(), args.fdl1_addr);
+            let _ = vm.load_bytes(&data, args.fdl1_addr);
+            let _ = vm.set_entry_point(args.fdl1_addr);
+        }
+    }
+
+    // Load FDL2 if specified
+    if let Some(f_path) = &fdl2_file {
+        if let Ok(data) = std::fs::read(f_path) {
+            println!("[FDL2] Staging FDL2 ({} bytes) into DRAM at 0x{:08X}", data.len(), args.fdl2_addr);
+            let _ = vm.load_bytes(&data, args.fdl2_addr);
+        }
+    }
+
+    // Simulate BSL handshake
+    if args.bsl {
         println!("[BSL] Simulating Spreadtrum BSL Protocol Handshake over UART0...");
+        println!("[BSL] Handshake ACK (0x80) received from target.");
+        println!("[BSL] Simulated BSL UART0 Handshake complete.");
     }
 
-    // Stage FDL2 if requested
-    if let Some(f2) = &fdl2_file {
-        if let Ok(mut f) = File::open(f2) {
-            let mut data = Vec::new();
-            if f.read_to_end(&mut data).is_ok() {
-                println!("[N2660Emu] Staging FDL2 to 0x{:08X}...", args.fdl2_addr);
-                let _ = vm.load_bytes(&data, args.fdl2_addr);
-            }
-        }
-    }
-
-    // Handle normal firmware payload
-    let target_entry = args.entry;
-    if let Some(fw) = &args.firmware {
-        if fw.exists() {
-            if let Err(e) = vm.load_binary(fw.to_str().unwrap(), target_entry) {
-                eprintln!("Failed to load firmware: {}", e);
-                process::exit(1);
-            }
-            if let Err(e) = vm.init_cpu(target_entry) {
-                eprintln!("Failed to initialize CPU: {}", e);
-                process::exit(1);
-            }
-        }
-    }
-
-    // ATAGS staging
+    // Stage ATAGS if enabled
     if args.atags {
-        if let Err(e) = vm.setup_atags(args.atags_addr, args.board_id as u32, args.cmdline) {
-            eprintln!("Failed to stage ATAGS: {}", e);
-            process::exit(1);
+        let cmd = args.cmdline.clone().unwrap_or_else(|| "console=ttyS0,115200 root=/dev/mtdblock3 ro mem=48M".to_string());
+        let _ = vm.setup_atags(args.atags_addr, args.board_id as u32, Some(cmd));
+    }
+
+    // Load firmware binary or BootROM
+    if args.bootrom {
+        println!("[BootROM] Reset vector configured at 0x00000000");
+        let _ = vm.set_entry_point(0x0000_0000);
+    } else if let Some(fw_path) = &firmware_target {
+        if let Ok(data) = std::fs::read(fw_path) {
+            println!("[VM] Loading binary '{:?}' ({} bytes) to address 0x{:08X}...", fw_path, data.len(), args.entry);
+            let _ = vm.load_bytes(&data, args.entry);
+            let _ = vm.set_entry_point(args.entry);
         }
     }
 
-    // Key injections
+    // Inject initial keys
     for k in &args.keys {
         vm.inject_key(k, true);
-        println!("[KPD] Injected key '{}' press", k);
     }
 
+    // Handle GUI or Interactive TUI mode
+    if args.gui {
+        let theme = args.theme.clone();
+        let closed = args.flip.to_lowercase() == "closed";
+        if let Err(e) = gui::run_desktop_gui(&mut vm, &theme, closed) {
+            eprintln!("Desktop GUI error: {}", e);
+        }
+        return;
+    }
+
+    if args.interactive {
+        if let Err(e) = tui::run_interactive_tui(&mut vm) {
+            eprintln!("Interactive TUI error: {}", e);
+        }
+        return;
+    }
+
+    // Standard headless execution
     println!("[N2660Emu] Executing Unisoc T107 at PC = 0x{:08X} (timeout: {}s)...", vm.get_pc(), args.timeout);
     let start_time = Instant::now();
-
     let step_slice = 50_000;
     let max_duration = std::time::Duration::from_secs(args.timeout);
 

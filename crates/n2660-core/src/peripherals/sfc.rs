@@ -46,6 +46,14 @@ impl SprdSfc {
         self.storage[..copy_len].copy_from_slice(&image_bytes[..copy_len]);
     }
 
+    pub fn write_page(&mut self, block: usize, page: usize, data: &[u8]) {
+        let flash_offset = (block * 64 + page) * NAND_PAGE_SIZE;
+        if flash_offset < self.storage.len() {
+            let end = (flash_offset + data.len()).min(self.storage.len());
+            self.storage[flash_offset..end].copy_from_slice(&data[..end - flash_offset]);
+        }
+    }
+
     pub fn read(&mut self, offset: u32) -> u32 {
         match offset {
             0x0000 => self.cmd,
