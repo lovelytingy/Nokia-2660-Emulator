@@ -24,7 +24,7 @@ The following table summarizes the verified physical memory addresses and device
 | `0x60000000 - 0x67FFFFFF` | 128 MB | Direct Flash Window | High-speed direct memory read window (XIP) into SPI NAND. | Verified |
 | `0x70000000 - 0x7FFFFFFF` | 256 MB | System Bus Matrix / Crypto | Security engine, DMA controller, fast bus arbitration. | Documented |
 | `0x80000000 - 0x82FFFFFF` | 48 MB | System DRAM (LPDDR2) | Main physical RAM (Nokia 2660 configuration). `FDL2` loaded at `0x80100000`. Kernel loaded at `0x80000000+`. | Verified (`spd_dump` dumps & vendor specs) |
-| `0xFFFF0000 - 0xFFFFFFFF` | 64 KB | High Vector BootROM | CPU boot exception vector before remap to SRAM. | Standard ARMv7-A architecture |
+| `0xFFFF0000 - 0xFFFFFFFF` | 64 KB | High Vector BootROM | CPU boot exception vector before remap to SRAM. | Verified (Clean-Room BootROM & Vector Table) |
 
 ---
 

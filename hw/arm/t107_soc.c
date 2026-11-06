@@ -84,6 +84,10 @@ static void t107_soc_realize(DeviceState *dev, Error **errp)
     memory_region_init_ram(&s->sram, OBJECT(dev), "t107.sram", T107_SRAM_SIZE, &error_fatal);
     memory_region_add_subregion(sysmem, T107_SRAM_BASE, &s->sram);
 
+    /* BootROM High Vector Region at 0xFFFF0000 (64 KB) */
+    memory_region_init_rom(&s->bootrom, OBJECT(dev), "t107.bootrom", T107_BOOTROM_SIZE, &error_fatal);
+    memory_region_add_subregion(sysmem, T107_BOOTROM_BASE, &s->bootrom);
+
     /* 2. DRAM Region (mapped at 0x80000000) */
     if (s->dram_mr) {
         memory_region_add_subregion(sysmem, T107_DRAM_BASE, s->dram_mr);

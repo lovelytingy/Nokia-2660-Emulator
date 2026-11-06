@@ -41,7 +41,8 @@ Nokia-2660-Emulator/
 ├── docs/
 │   ├── ARCHITECTURE.md          # Complete emulator architecture & design
 │   ├── MEMORY_MAP.md            # Verified memory map and peripheral registers
-│   ├── BOOT_PROCESS.md          # BootROM, BSL, FDL1, FDL2, and MOCOR flow
+│   ├── BOOT_FLOW.md             # BootROM reset vector, BOOT0 header & multi-stage boot flow
+│   ├── BOOT_PROCESS.md          # Multi-stage boot sequence (BootROM -> FDL1 -> FDL2 -> OS)
 │   ├── BSL_PROTOCOL.md          # Spreadtrum BSL framing, opcodes, CRC16 & FDL staging
 │   └── PERIPHERALS.md           # SPRD UART, Timers, Keypad, SPI / Display specs
 ├── hw/
@@ -78,10 +79,17 @@ Nokia-2660-Emulator/
 │       ├── input/sprd_kpd.h     # Keypad matrix and Nokia keycode definitions
 │       ├── ssi/sprd_spi.h       # SPRD SPI host interface
 │       └── timer/sprd_timer.h   # SPRD System Timer registers
+├── roms/
+│   ├── bootrom.s                # Clean-room ARMv7-A BootROM assembly (Reset vector at 0x0)
+│   ├── bootrom.ld               # BootROM linker script targeting 0x00000000
+│   ├── bootrom.bin              # Compiled 864-byte standalone BootROM binary
+│   └── Makefile                 # Built with arm-none-eabi-gcc
 ├── tests/
 │   ├── baremetal/               # ARM Cortex-A7 baremetal verification firmware
-│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, Displays, KPD, Flash, BSL, Audio
+│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, Displays, KPD, Flash, BSL, Audio, BootROM
 │   │   ├── startup.s            # Vector table, stack setup, VFP/NEON enable
+│   │   ├── bootrom.c            # Baremetal BootROM reset vector & BOOT0 loader driver
+│   │   ├── bootrom.h            # SPRD BOOT0 header definition & loader API
 │   │   ├── sprd_uart.c          # Baremetal UART driver
 │   │   ├── gc9307.c             # Baremetal GC9307 LCD driver & test pattern
 │   │   ├── st7735.c             # Baremetal ST7735 outer sub-display driver
@@ -92,11 +100,13 @@ Nokia-2660-Emulator/
 │   │   ├── linker.ld            # Linker script targeting T107 memory map
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
 │   └── unit/
+│       ├── test_bootrom.py      # BootROM reset vector, BOOT0 packaging & boot flow tests
 │       ├── test_memory_map.py   # Automated memory map & peripheral tests
 │       └── test_bsl_protocol.py # BSL protocol framing, CRC16, and FDL loader tests
 ├── tools/
 │   ├── n2660emu.py              # Unified CLI emulator launcher
 │   ├── unicorn_runner.py        # Unicorn VM runner with exact T107 MMIO
+│   ├── mksprd_img.py            # Unisoc SPRD BOOT0 image packaging & NAND flash utility
 │   ├── bsl_engine.py            # Spreadtrum BSL protocol engine (Client & Server)
 │   ├── pac_extractor.py         # Spreadtrum .PAC vendor firmware extractor
 │   └── disasm.py                # Capstone disassembler with T107 annotations
@@ -180,31 +190,54 @@ Output:
 [N2660Emu Audio] Beep Tone: 1000 Hz, 50 ms, volume 85%
 [BUZZER] Triggered 1000 Hz key click tone (50 ms, vol 85%)
 [PASS] SPRD Audio DAC, PCM FIFO streaming & tone buzzer verified.
+[TEST] Testing BootROM Reset Vector & Multi-Stage Boot Flow...
+[BOOTROM] SPRD magic: 0x53505244 | Checksum: 0x10B050E0 | Staged at: 0x00006200
+[PASS] BootROM reset vector, SPRD header validation & BOOT0 staging verified.
 [TEST] Triggering MMIO read at unmapped address 0x40001000...
 
-[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x80000808
+[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x8000097C
 [INFO] Unmapped MMIO read returned: 0x00000000
 
 --------------------------------------------------------
-[RESULT] *** ALL PHASE 1, 2, 3 (DUAL DISPLAY, INPUT, STORAGE & AUDIO) CHECKS PASSED ***
-[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL & Audio OK!
+[RESULT] *** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO & BOOTROM) CHECKS PASSED ***
+[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL, Audio & BootROM OK!
 --------------------------------------------------------
 ```
 
-### 3. Simulate Keypad Input and Flip Opening / Closing
+### 3. Execute Hardware BootROM & Multi-Stage Boot (BOOT0 vs BSL)
+Execute the clean-room ARMv7-A BootROM starting at the reset vector (`0x00000000`):
+```bash
+# 1. Cold boot with BOOT0 image in SPI NAND Block 0:
+./bin/n2660emu --boot0 boot0.bin
+
+# 2. Force BSL UART download mode using Nokia '*' download key:
+./bin/n2660emu --bootrom --boot-key star --fdl1 extracted_fw/fdl1.bin
+
+# 3. Simulate blank SPI NAND fallback to BSL recovery mode:
+./bin/n2660emu --bootrom
+```
+
+### 4. Package Raw Binaries into Unisoc SPRD BOOT0 Containers
+Use `tools/mksprd_img.py` to wrap any baremetal payload with standard 32-byte SPRD headers:
+```bash
+python3 tools/mksprd_img.py create -i payload.bin -o boot0.bin --load-addr 0x00006200 --entry 0x00006200
+python3 tools/mksprd_img.py verify boot0.bin
+```
+
+### 5. Simulate Keypad Input and Flip Opening / Closing
 Simulate hardware key events and flip states dynamically via CLI arguments:
 ```bash
 # Simulate pressing '5' and 'OK' with clamshell closed:
 ./bin/n2660emu tests/baremetal/test_firmware.bin --flip closed --key 5 --key ok
 ```
 
-### 4. Mount Custom SPI NAND Flash Images
+### 6. Mount Custom SPI NAND Flash Images
 Mount external raw flash images, sparse partition dumps, or partitions extracted from vendor `.PAC` packages:
 ```bash
 ./bin/n2660emu tests/baremetal/test_firmware.bin --flash flash_dump.bin
 ```
 
-### 5. Execute FDL1 & Simulate BootROM BSL Download Handshake
+### 7. Execute FDL1 & Simulate BootROM BSL Download Handshake
 Load first-stage bootloader `fdl1.bin` into SRAM (`0x00006200`) and optionally simulate the Spreadtrum BSL HDLC protocol handshake over UART0:
 ```bash
 # Direct FDL1 staging into SRAM and execution:
@@ -217,19 +250,19 @@ Load first-stage bootloader `fdl1.bin` into SRAM (`0x00006200`) and optionally s
 ./bin/n2660emu --fdl1 extracted_fw/fdl1.bin --fdl2 extracted_fw/fdl2.bin --bsl
 ```
 
-### 6. Capture Audio and Buzzer Tones to WAV
+### 8. Capture Audio and Buzzer Tones to WAV
 Capture PCM audio playback and hardware buzzer tone generation to a standard 16-bit 44.1 kHz stereo WAV file:
 ```bash
 ./bin/n2660emu tests/baremetal/test_firmware.bin --audio-dump audio_capture.wav
 ```
 
-### 7. Run with Instruction Tracing
+### 9. Run with Instruction Tracing
 Trace CPU instructions as they execute in real time:
 ```bash
 make trace
 ```
 
-### 8. Render Primary and Secondary Sub-Displays
+### 10. Render Primary and Secondary Sub-Displays
 Render test graphics and dump high-resolution framebuffer PPM images:
 ```bash
 # Render and dump 240x320 main display:
@@ -239,12 +272,12 @@ make screen
 make sub-screen
 ```
 
-### 9. Run Automated Unit Tests
+### 11. Run Automated Unit Tests
 ```bash
 make test
 ```
 
-### 10. Disassemble Binary with Unisoc T107 Annotations
+### 12. Disassemble Binary with Unisoc T107 Annotations
 ```bash
 make disasm
 ```
@@ -280,8 +313,8 @@ To list partition layouts and load addresses without extracting:
 - [x] **Phase 1: CPU and Memory Emulation** (ARM Cortex-A7, SRAM, DRAM, SPRD UART, Baremetal test passed)
 - [x] **Phase 2: T107 Memory Map & Core SoC** (Timers, GPIO, MMIO access logging, down-counter verification)
 - [x] **Phase 3: Nokia Peripherals (Displays, Input, Storage & Audio)** (SPRD SPI0 & SPI1, GC9307 main LCD, ST7735 sub-screen, SPRD KPD matrix, Hall flip sensor, 128 MB SPI NAND & SFC, SPRD Audio DAC & Tone Buzzer)
-- [x] **Phase 4: Spreadtrum BSL Protocol Engine & FDL Loader** (HDLC framing, CRC16, BootROM BSL handshake simulation, FDL1 SRAM / FDL2 DRAM staging)
-- [ ] **Phase 4 (Cont.): MOCOR OS Bringup** (FDL1 DDR init, FDL2 flash ops, BOOT0/BOOT1, MOCOR OS)
+- [x] **Phase 4: BootROM, BSL Engine & Multi-Stage Boot Flow** (Reset vector at 0x00000000, download key detection, SPRD BOOT0 header parser, NAND Block 0 staging, BSL HDLC framing & CRC16, FDL1/FDL2 staging)
+- [ ] **Phase 4 (Cont.): MOCOR OS Bringup & Vendor Firmware Execution** (FDL1 DDR init, FDL2 flash ops, BOOT1/LK, MOCOR OS)
 - [ ] **Phase 5: OpenFeatureOS Development** (Custom kernel bringup and verification)
 
 ---

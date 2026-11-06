@@ -2,13 +2,16 @@
 
 PYTHON ?= python3
 
-all: firmware
+all: firmware bootrom
 
 firmware:
 	$(MAKE) -C tests/baremetal
 
-test: firmware
-	$(PYTHON) tests/unit/test_memory_map.py
+bootrom:
+	$(MAKE) -C roms
+
+test: firmware bootrom
+	$(PYTHON) -m unittest discover -s tests/unit -v
 
 run: firmware
 	./bin/n2660emu tests/baremetal/test_firmware.bin --engine unicorn
@@ -27,6 +30,7 @@ disasm: firmware
 
 clean:
 	$(MAKE) -C tests/baremetal clean
-	rm -rf build __pycache__ tools/__pycache__ tests/unit/__pycache__
+	$(MAKE) -C roms clean
+	rm -rf build __pycache__ tools/__pycache__ tests/unit/__pycache__ roms/__pycache__
 
 .PHONY: all firmware test run trace disasm clean

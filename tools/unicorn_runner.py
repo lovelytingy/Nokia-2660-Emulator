@@ -28,6 +28,15 @@ except ImportError:
         BSL_CMD_MIDST_DATA, BSL_CMD_END_DATA, BSL_CMD_EXEC_DATA
     )
 
+try:
+    from tools.mksprd_img import (
+        SPRD_BOOT0_MAGIC, SPRD_BOOT0_MAGIC_BIMG, create_boot0_image, BLOCK_SIZE
+    )
+except ImportError:
+    from mksprd_img import (
+        SPRD_BOOT0_MAGIC, SPRD_BOOT0_MAGIC_BIMG, create_boot0_image, BLOCK_SIZE
+    )
+
 for pyver in ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]:
     p = os.path.expanduser(f"~/Library/Python/{pyver}/lib/python/site-packages")
     if os.path.isdir(p) and p not in sys.path:
@@ -825,6 +834,49 @@ class T107UnicornVM:
             self.uc.mem_write(FLASH_DIRECT_BASE + offset, bytes(self.flash_storage[offset : offset + direct_len]))
         print(f"[VM Flash] Loaded '{file_path}' ({len(data)} bytes) at flash offset 0x{offset:08X}")
 
+    def load_bootrom(self, file_path=None):
+        """Loads Unisoc T107 BootROM binary at 0x00000000."""
+        if file_path is None:
+            default_path = os.path.join(os.path.dirname(__file__), "..", "roms", "bootrom.bin")
+            if not os.path.isfile(default_path):
+                roms_dir = os.path.join(os.path.dirname(__file__), "..", "roms")
+                if os.path.isfile(os.path.join(roms_dir, "Makefile")):
+                    try:
+                        subprocess.run(["make", "-C", roms_dir], check=True, capture_output=True)
+                    except Exception:
+                        pass
+            if os.path.isfile(default_path):
+                file_path = default_path
+            else:
+                raise FileNotFoundError(f"Default BootROM binary not found at '{default_path}'. Build with 'make -C roms'.")
+        with open(file_path, "rb") as f:
+            data = f.read()
+        print(f"[VM BootROM] Staging Clean-Room BootROM '{file_path}' ({len(data)} bytes) at 0x00000000...")
+        self.uc.mem_write(0x00000000, data)
+        return len(data)
+
+    def load_boot0(self, file_path, block_index=0, auto_wrap=True):
+        """Loads or packages a BOOT0 image into SPI NAND flash block 0."""
+        with open(file_path, "rb") as f:
+            data = f.read()
+        if len(data) >= 4:
+            magic = struct.unpack("<I", data[:4])[0]
+        else:
+            magic = 0
+        if magic not in (SPRD_BOOT0_MAGIC, SPRD_BOOT0_MAGIC_BIMG) and auto_wrap:
+            print(f"[VM BootROM] Raw binary detected. Wrapping '{file_path}' ({len(data)} bytes) into SPRD BOOT0 container...")
+            data = create_boot0_image(data, load_addr=0x00006200, entry_point=0x00006200)
+        offset = block_index * BLOCK_SIZE
+        end = offset + len(data)
+        if end > len(self.flash_storage):
+            self.flash_storage.extend(b'\xFF' * (end - len(self.flash_storage)))
+        self.flash_storage[offset:end] = data
+        direct_len = min(len(data), max(0, FLASH_DIRECT_SIZE - offset))
+        if direct_len > 0:
+            self.uc.mem_write(FLASH_DIRECT_BASE + offset, bytes(self.flash_storage[offset : offset + direct_len]))
+        print(f"[VM BootROM] Staged BOOT0 ({len(data)} bytes) into SPI NAND Block {block_index} (Flash Offset 0x{offset:08X})")
+        return len(data)
+
     def run(self, entry_point, end_address=None, timeout_sec=10):
         # Setup Cortex-A7 initial registers
         # CPSR: Supervisor mode (0x13), IRQ/FIQ disabled (0xD3)
@@ -1006,11 +1058,16 @@ def main():
     parser.add_argument("--fdl2", type=str, default=None, help="Path to FDL2 binary to stage into DRAM (default addr: 0x80100000)")
     parser.add_argument("--fdl2-addr", type=lambda x: int(x, 0), default=0x80100000, help="FDL2 load address (default: 0x80100000)")
     parser.add_argument("--bsl", action="store_true", help="Simulate BootROM BSL handshake over UART0 when loading FDL1")
+    parser.add_argument("--bootrom", action="store_true", help="Execute hardware BootROM reset vector at 0x00000000")
+    parser.add_argument("--bootrom-file", type=str, default=None, help="Path to custom BootROM binary (default: roms/bootrom.bin)")
+    parser.add_argument("--boot0", type=str, default=None, help="Path to BOOT0 binary to stage into SPI NAND Block 0")
+    parser.add_argument("--boot-mode", choices=["auto", "bsl", "nand"], default="auto", help="Boot mode dispatch (default: auto)")
+    parser.add_argument("--boot-key", choices=["star", "none"], default="none", help="Hardware boot key to hold at reset (default: none)")
     parser.add_argument("--audio-dump", type=str, default=None, help="Path to dump audio output as WAV file")
     args = parser.parse_args()
 
-    if not args.binary and not args.fdl1:
-        print("Error: Either binary or --fdl1 must be specified.")
+    if not args.binary and not args.fdl1 and not args.bootrom and not args.boot0:
+        print("Error: Either binary, --fdl1, --bootrom, or --boot0 must be specified.")
         sys.exit(1)
 
     vm = T107UnicornVM(trace_instructions=args.trace, max_instructions=args.max_insns)
@@ -1018,6 +1075,13 @@ def main():
 
     if args.flash:
         vm.load_flash_image(args.flash)
+
+    if args.boot0:
+        vm.load_boot0(args.boot0, block_index=0)
+
+    # Boot key injection
+    if args.boot_key == "star" or args.boot_mode == "bsl":
+        vm.inject_key("*", pressed=True)
 
     if args.key:
         for k in args.key:
@@ -1035,6 +1099,10 @@ def main():
                 print(f"Error: FDL2 binary file '{args.fdl2}' not found.")
                 sys.exit(1)
             vm.load_fdl2(args.fdl2, load_addr=args.fdl2_addr)
+
+    if args.bootrom or args.boot0 or (not args.binary and not args.fdl1):
+        vm.load_bootrom(args.bootrom_file)
+        entry_point = 0x00000000
     elif args.binary:
         if not os.path.isfile(args.binary):
             print(f"Error: Binary file '{args.binary}' not found.")

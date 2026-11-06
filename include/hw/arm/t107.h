@@ -49,6 +49,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(Nokia2660MachineState, NOKIA_2660_MACHINE)
 #define T107_SFC_BASE             0x500A0000        /* Serial Flash Controller (SPI NAND) */
 #define T107_AUDIO_BASE           0x500C0000        /* SPRD Audio Subsystem / Codec & Buzzer */
 #define T107_FLASH_BASE           0x60000000        /* Direct Flash Read Window (128 MB) */
+#define T107_BOOTROM_BASE         0xFFFF0000        /* BootROM High Vector address (64 KB) */
+#define T107_BOOTROM_SIZE         (64 * 1024)
 
 /* Boot & FDL Loader Staging Addresses */
 #define T107_IRAM_FDL1_BASE       0x00006200        /* FDL1 load entry in SRAM */
@@ -64,6 +66,7 @@ struct T107SocState {
     /*< public >*/
     ARMCPU cpu;
     MemoryRegion sram;
+    MemoryRegion bootrom;
     MemoryRegion dram_alias;
     MemoryRegion *dram_mr;
     MemoryRegion mmio_trap;

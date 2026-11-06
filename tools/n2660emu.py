@@ -15,14 +15,16 @@ import shutil
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False, flash=None, fdl1=None, fdl1_addr=0x00006200, fdl2=None, fdl2_addr=0x80100000, bsl=False, audio_dump=None):
+def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False, flash=None, fdl1=None, fdl1_addr=0x00006200, fdl2=None, fdl2_addr=0x80100000, bsl=False, audio_dump=None, bootrom=False, bootrom_file=None, boot0=None, boot_mode="auto", boot_key="none"):
     script_path = os.path.join(PROJECT_ROOT, "tools", "unicorn_runner.py")
     cmd = [
         sys.executable,
         script_path,
         "--entry", hex(entry_addr),
         "--timeout", str(timeout),
-        "--flip", flip
+        "--flip", flip,
+        "--boot-mode", boot_mode,
+        "--boot-key", boot_key
     ]
     if bin_path:
         cmd.append(bin_path)
@@ -30,6 +32,12 @@ def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dum
         cmd.append("--trace")
     if flash:
         cmd.extend(["--flash", flash])
+    if bootrom:
+        cmd.append("--bootrom")
+    if bootrom_file:
+        cmd.extend(["--bootrom-file", bootrom_file])
+    if boot0:
+        cmd.extend(["--boot0", boot0])
     if fdl1:
         cmd.extend(["--fdl1", fdl1, "--fdl1-addr", hex(fdl1_addr)])
     if fdl2:
@@ -50,7 +58,7 @@ def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dum
         for k in keys:
             cmd.extend(["--key", k])
 
-    target_desc = fdl1 if fdl1 else (bin_path or "Bootrom")
+    target_desc = boot0 if boot0 else (fdl1 if fdl1 else (bin_path or "BootROM"))
     print(f"[N2660Emu] Launching Unicorn Engine on '{target_desc}'...")
     res = subprocess.run(cmd)
     return res.returncode
@@ -129,12 +137,17 @@ Examples:
     parser.add_argument("--fdl2", type=str, default=None, help="Path to FDL2 binary to stage into DRAM (default addr: 0x80100000)")
     parser.add_argument("--fdl2-addr", type=lambda x: int(x, 0), default=0x80100000, help="FDL2 load address (default: 0x80100000)")
     parser.add_argument("--bsl", action="store_true", help="Simulate BootROM BSL handshake over UART0 when loading FDL1")
+    parser.add_argument("--bootrom", action="store_true", help="Execute hardware BootROM reset vector at 0x00000000")
+    parser.add_argument("--bootrom-file", type=str, default=None, help="Path to custom BootROM binary (default: roms/bootrom.bin)")
+    parser.add_argument("--boot0", type=str, default=None, help="Path to BOOT0 binary to stage into SPI NAND Block 0")
+    parser.add_argument("--boot-mode", choices=["auto", "bsl", "nand"], default="auto", help="Boot mode dispatch (default: auto)")
+    parser.add_argument("--boot-key", choices=["star", "none"], default="none", help="Hardware boot key to hold at reset (default: none)")
     parser.add_argument("--audio-dump", type=str, default=None, help="Path to dump audio output as WAV file")
 
     args, unknown = parser.parse_known_args()
 
-    if not args.firmware and not args.fdl1:
-        print("Error: Either firmware or --fdl1 must be specified.")
+    if not args.firmware and not args.fdl1 and not args.bootrom and not args.boot0:
+        print("Error: Either firmware, --fdl1, --bootrom, or --boot0 must be specified.")
         sys.exit(1)
 
     fw_path = os.path.abspath(args.firmware) if args.firmware else None
@@ -145,7 +158,7 @@ Examples:
     # Determine engine if auto
     engine = args.engine
     if engine == "auto":
-        if args.fdl1 or (fw_path and fw_path.endswith(".bin")):
+        if args.bootrom or args.boot0 or args.fdl1 or (fw_path and fw_path.endswith(".bin")):
             engine = "unicorn"
         else:
             engine = "qemu"
@@ -157,7 +170,9 @@ Examples:
                                  sub_screen_dump=args.sub_screen_dump, preview_sub_screen=args.preview_sub_screen,
                                  flash=args.flash, fdl1=args.fdl1, fdl1_addr=args.fdl1_addr,
                                  fdl2=args.fdl2, fdl2_addr=args.fdl2_addr, bsl=args.bsl,
-                                 audio_dump=args.audio_dump)
+                                 audio_dump=args.audio_dump,
+                                 bootrom=args.bootrom, bootrom_file=args.bootrom_file,
+                                 boot0=args.boot0, boot_mode=args.boot_mode, boot_key=args.boot_key)
     else:
         machine = "virt" if engine == "qemu-virt" else "nokia-2660"
         ret = run_qemu_system(fw_path, machine=machine, gdb=args.gdb, wait_gdb=args.wait_gdb, extra_args=unknown)

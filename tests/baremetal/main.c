@@ -14,6 +14,7 @@
 #include "sfc.h"
 #include "bsl.h"
 #include "audio.h"
+#include "bootrom.h"
 
 /* Peripheral Base Addresses */
 #define SPRD_TIMERS_BASE   0x50030000
@@ -360,7 +361,81 @@ int main(void)
         audio_ok = 0;
     }
 
-    /* 12. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 12. BootROM Reset Vector & Multi-Stage Boot Flow Test */
+    uart_puts("[TEST] Testing BootROM Reset Vector & Multi-Stage Boot Flow...\n");
+    int bootrom_ok = 1;
+
+    /* Sub-test A: Boot mode detection when no download key is pressed */
+    boot_mode_t initial_mode = bootrom_detect_mode();
+    if (initial_mode != BOOT_MODE_NORMAL_NAND) {
+        uart_puts("[FAIL] Expected BOOT_MODE_NORMAL_NAND initially.\n");
+        bootrom_ok = 0;
+    }
+
+    /* Sub-test B: Construct and verify SPRD BOOT0 image in memory */
+    uint8_t mock_boot0_payload[128];
+    for (int i = 0; i < 128; i++) {
+        mock_boot0_payload[i] = (uint8_t)(0x55 + (i * 3));
+    }
+    uint32_t payload_csum = bootrom_calc_checksum(mock_boot0_payload, sizeof(mock_boot0_payload));
+
+    uint8_t boot0_image[sizeof(sprd_boot0_hdr_t) + sizeof(mock_boot0_payload)];
+    sprd_boot0_hdr_t *hdr = (sprd_boot0_hdr_t *)boot0_image;
+    hdr->magic = SPRD_BOOT0_MAGIC;
+    hdr->version = SPRD_BOOT0_VERSION;
+    hdr->load_addr = T107_BOOT0_LOAD_ADDR;
+    hdr->image_size = sizeof(mock_boot0_payload);
+    hdr->entry_point = T107_BOOT0_LOAD_ADDR;
+    hdr->checksum = payload_csum;
+    hdr->flags = 0;
+    hdr->reserved = 0;
+
+    for (size_t i = 0; i < sizeof(mock_boot0_payload); i++) {
+        boot0_image[sizeof(sprd_boot0_hdr_t) + i] = mock_boot0_payload[i];
+    }
+
+    if (bootrom_verify_header(hdr) != 0) {
+        uart_puts("[FAIL] BOOT0 header verification failed.\n");
+        bootrom_ok = 0;
+    }
+
+    /* Sub-test C: Simulate loading BOOT0 image into SRAM at 0x00006200 */
+    sprd_boot0_hdr_t loaded_hdr;
+    int load_res = bootrom_load_boot0((uintptr_t)boot0_image, (uint8_t *)T107_BOOT0_LOAD_ADDR, &loaded_hdr);
+    if (load_res != 0) {
+        uart_puts("[FAIL] bootrom_load_boot0 failed with error code.\n");
+        bootrom_ok = 0;
+    } else {
+        /* Verify SRAM contents */
+        volatile uint8_t *iram_ptr = (volatile uint8_t *)T107_BOOT0_LOAD_ADDR;
+        for (size_t i = 0; i < sizeof(mock_boot0_payload); i++) {
+            if (iram_ptr[i] != mock_boot0_payload[i]) {
+                uart_puts("[FAIL] SRAM staged BOOT0 payload mismatch.\n");
+                bootrom_ok = 0;
+                break;
+            }
+        }
+    }
+
+    /* Sub-test D: Check that corrupted checksum is rejected */
+    hdr->checksum ^= 0x12345678;
+    int corrupt_res = bootrom_load_boot0((uintptr_t)boot0_image, (uint8_t *)T107_BOOT0_LOAD_ADDR, &loaded_hdr);
+    if (corrupt_res != -5) {
+        uart_puts("[FAIL] Corrupted checksum was not rejected.\n");
+        bootrom_ok = 0;
+    }
+
+    uart_puts("[BOOTROM] SPRD magic: 0x53505244 | Checksum: ");
+    uart_puthex32(payload_csum);
+    uart_puts(" | Staged at: 0x00006200\n");
+
+    if (bootrom_ok) {
+        uart_puts("[PASS] BootROM reset vector, SPRD header validation & BOOT0 staging verified.\n");
+    } else {
+        uart_puts("[FAIL] BootROM verification failed.\n");
+    }
+
+    /* 13. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -368,11 +443,11 @@ int main(void)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 13. Summary */
+    /* 14. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok && audio_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3 (DUAL DISPLAY, INPUT, STORAGE & AUDIO) CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL & Audio OK!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok && audio_ok && bootrom_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO & BOOTROM) CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL, Audio & BootROM OK!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }

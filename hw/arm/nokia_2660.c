@@ -34,6 +34,9 @@ static void nokia_2660_init(MachineState *machine)
 
     if (machine->kernel_filename) {
         arm_load_kernel(ARM_CPU(&ms->soc.cpu), machine, &nokia_2660_boot_info);
+    } else if (machine->firmware) {
+        nokia_2660_boot_info.loader_start = T107_SRAM_BASE;
+        arm_load_kernel(ARM_CPU(&ms->soc.cpu), machine, &nokia_2660_boot_info);
     }
 }
 
