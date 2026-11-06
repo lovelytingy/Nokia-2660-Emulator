@@ -10,6 +10,20 @@ SPDX-License-Identifier: MIT
 import sys
 import os
 import argparse
+import collections
+
+try:
+    from tools.bsl_engine import (
+        BslServer, BslClient, decode_packet, encode_packet,
+        get_cmd_name, BSL_CMD_CONNECT, BSL_CMD_START_DATA,
+        BSL_CMD_MIDST_DATA, BSL_CMD_END_DATA, BSL_CMD_EXEC_DATA
+    )
+except ImportError:
+    from bsl_engine import (
+        BslServer, BslClient, decode_packet, encode_packet,
+        get_cmd_name, BSL_CMD_CONNECT, BSL_CMD_START_DATA,
+        BSL_CMD_MIDST_DATA, BSL_CMD_END_DATA, BSL_CMD_EXEC_DATA
+    )
 
 for pyver in ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]:
     p = os.path.expanduser(f"~/Library/Python/{pyver}/lib/python/site-packages")
@@ -147,6 +161,10 @@ class T107UnicornVM:
         # Initialize Unicorn ARM emulator
         self.uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
 
+        # UART0 FIFOs
+        self.uart0_rx_fifo = collections.deque()
+        self.uart0_tx_buffer = bytearray()
+
         # Timer and GPIO peripheral state
         self.timer_load = 0
         self.timer_ctl = 0
@@ -259,7 +277,9 @@ class T107UnicornVM:
     def _hook_mem_write(self, uc, access, address, size, value, user_data):
         # 1. SPRD UART0 TXD
         if address == (SPRD_UART0_BASE + SPRD_TXD_REG):
-            char = chr(value & 0xFF)
+            byte_val = value & 0xFF
+            self.uart0_tx_buffer.append(byte_val)
+            char = chr(byte_val)
             try:
                 sys.stdout.write(char)
                 sys.stdout.flush()
@@ -518,9 +538,17 @@ class T107UnicornVM:
             print(f"\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{address:08X} = 0x{value:08X} (size {size}) from PC 0x{pc:08X}")
 
     def _hook_mem_read(self, uc, access, address, size, value, user_data):
-        # 1. SPRD UART0 Status
+        # 1. SPRD UART0 Status & RX FIFO
         if address == (SPRD_UART0_BASE + SPRD_STS1_REG):
-            uc.mem_write(address, (1 << 8).to_bytes(4, 'little'))
+            rx_count = min(0xFF, len(self.uart0_rx_fifo))
+            tx_ready = 1 << 8
+            sts = (tx_ready | rx_count)
+            uc.mem_write(address, sts.to_bytes(4, 'little'))
+            return
+
+        if address == (SPRD_UART0_BASE + SPRD_RXD_REG):
+            rx_byte = self.uart0_rx_fifo.popleft() if self.uart0_rx_fifo else 0
+            uc.mem_write(address, rx_byte.to_bytes(4, 'little'))
             return
 
         # 2. SPRD System Timer
@@ -645,6 +673,34 @@ class T107UnicornVM:
             data = f.read()
         print(f"[VM] Loading binary '{binary_path}' ({len(data)} bytes) to address 0x{load_addr:08X}...")
         self.uc.mem_write(load_addr, data)
+
+    def load_fdl1(self, file_path, load_addr=0x00006200, simulate_bsl=False):
+        """Loads FDL1 (First Downloader) into SRAM at load_addr."""
+        with open(file_path, "rb") as f:
+            data = f.read()
+        print(f"[N2660Emu BSL] Staging FDL1 '{file_path}' ({len(data)} bytes) to address 0x{load_addr:08X}...")
+        if simulate_bsl:
+            print(f"[N2660Emu BSL] Simulating Spreadtrum BSL Protocol Handshake over UART0...")
+            client = BslClient(use_crc16=True)
+            stream = client.build_file_transfer_stream(data, target_addr=load_addr, chunk_size=1024)
+            print(f"[N2660Emu BSL] Generated {len(stream)} BSL HDLC packets (CONNECT -> START_DATA -> MIDST -> END -> EXEC)")
+            def mem_writer(addr, chunk):
+                self.uc.mem_write(addr, chunk)
+            server = BslServer(write_mem_fn=mem_writer)
+            for pkt in stream:
+                server.process_incoming(pkt)
+            print(f"[N2660Emu BSL] BSL handshake acknowledged. FDL1 loaded at 0x{load_addr:08X}, ready to execute.")
+        else:
+            self.uc.mem_write(load_addr, data)
+        return len(data)
+
+    def load_fdl2(self, file_path, load_addr=0x80100000):
+        """Loads FDL2 (Second Downloader) into high DRAM at load_addr."""
+        with open(file_path, "rb") as f:
+            data = f.read()
+        print(f"[N2660Emu BSL] Staging FDL2 '{file_path}' ({len(data)} bytes) to address 0x{load_addr:08X}...")
+        self.uc.mem_write(load_addr, data)
+        return len(data)
 
     def load_flash_image(self, file_path, offset=0):
         """Loads a raw binary flash image or partition into flash memory."""
@@ -775,7 +831,7 @@ class T107UnicornVM:
 
 def main():
     parser = argparse.ArgumentParser(description="N2660Emu Unicorn VM Runner")
-    parser.add_argument("binary", help="Path to raw binary file to execute")
+    parser.add_argument("binary", nargs="?", default=None, help="Path to raw binary file to execute")
     parser.add_argument("--entry", type=lambda x: int(x, 0), default=0x80000000,
                         help="Execution entry point address (default: 0x80000000)")
     parser.add_argument("--trace", action="store_true", help="Enable instruction tracing")
@@ -788,10 +844,15 @@ def main():
     parser.add_argument("--key", type=str, action="append", help="Inject key press (e.g. --key 5 or --key ok)")
     parser.add_argument("--flip", choices=["open", "closed"], default="open", help="Hall effect flip sensor initial state (default: open)")
     parser.add_argument("--flash", type=str, default=None, help="Path to raw SPI NAND flash image to mount")
+    parser.add_argument("--fdl1", type=str, default=None, help="Path to FDL1 binary to stage and run (default addr: 0x00006200)")
+    parser.add_argument("--fdl1-addr", type=lambda x: int(x, 0), default=0x00006200, help="FDL1 load address (default: 0x00006200)")
+    parser.add_argument("--fdl2", type=str, default=None, help="Path to FDL2 binary to stage into DRAM (default addr: 0x80100000)")
+    parser.add_argument("--fdl2-addr", type=lambda x: int(x, 0), default=0x80100000, help="FDL2 load address (default: 0x80100000)")
+    parser.add_argument("--bsl", action="store_true", help="Simulate BootROM BSL handshake over UART0 when loading FDL1")
     args = parser.parse_args()
 
-    if not os.path.isfile(args.binary):
-        print(f"Error: Binary file '{args.binary}' not found.")
+    if not args.binary and not args.fdl1:
+        print("Error: Either binary or --fdl1 must be specified.")
         sys.exit(1)
 
     vm = T107UnicornVM(trace_instructions=args.trace, max_instructions=args.max_insns)
@@ -804,8 +865,26 @@ def main():
         for k in args.key:
             vm.inject_key(k, pressed=True)
 
-    vm.load_binary(args.binary, args.entry)
-    success = vm.run(entry_point=args.entry, timeout_sec=args.timeout)
+    entry_point = args.entry
+    if args.fdl1:
+        if not os.path.isfile(args.fdl1):
+            print(f"Error: FDL1 binary file '{args.fdl1}' not found.")
+            sys.exit(1)
+        vm.load_fdl1(args.fdl1, load_addr=args.fdl1_addr, simulate_bsl=args.bsl)
+        entry_point = args.fdl1_addr
+        if args.fdl2:
+            if not os.path.isfile(args.fdl2):
+                print(f"Error: FDL2 binary file '{args.fdl2}' not found.")
+                sys.exit(1)
+            vm.load_fdl2(args.fdl2, load_addr=args.fdl2_addr)
+    elif args.binary:
+        if not os.path.isfile(args.binary):
+            print(f"Error: Binary file '{args.binary}' not found.")
+            sys.exit(1)
+        vm.load_binary(args.binary, args.entry)
+        entry_point = args.entry
+
+    success = vm.run(entry_point=entry_point, timeout_sec=args.timeout)
 
     if args.screen_dump:
         vm.export_ppm(args.screen_dump)

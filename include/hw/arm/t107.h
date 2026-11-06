@@ -48,6 +48,11 @@ OBJECT_DECLARE_SIMPLE_TYPE(Nokia2660MachineState, NOKIA_2660_MACHINE)
 #define T107_SFC_BASE             0x500A0000        /* Serial Flash Controller (SPI NAND) */
 #define T107_FLASH_BASE           0x60000000        /* Direct Flash Read Window (128 MB) */
 
+/* Boot & FDL Loader Staging Addresses */
+#define T107_IRAM_FDL1_BASE       0x00006200        /* FDL1 load entry in SRAM */
+#define T107_DRAM_FDL2_BASE       0x80100000        /* FDL2 load entry in DRAM */
+#define T107_MOCOR_KERNEL_BASE    0x80040000        /* MOCOR OS kernel entry */
+
 #define T107_NUM_UARTS            3
 
 struct T107SocState {

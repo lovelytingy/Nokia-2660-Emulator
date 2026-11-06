@@ -42,6 +42,7 @@ Nokia-2660-Emulator/
 │   ├── ARCHITECTURE.md          # Complete emulator architecture & design
 │   ├── MEMORY_MAP.md            # Verified memory map and peripheral registers
 │   ├── BOOT_PROCESS.md          # BootROM, BSL, FDL1, FDL2, and MOCOR flow
+│   ├── BSL_PROTOCOL.md          # Spreadtrum BSL framing, opcodes, CRC16 & FDL staging
 │   └── PERIPHERALS.md           # SPRD UART, Timers, Keypad, SPI / Display specs
 ├── hw/
 │   ├── arm/
@@ -76,20 +77,23 @@ Nokia-2660-Emulator/
 │       └── timer/sprd_timer.h   # SPRD System Timer registers
 ├── tests/
 │   ├── baremetal/               # ARM Cortex-A7 baremetal verification firmware
-│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, Displays, KPD, Flash tests
+│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, Displays, KPD, Flash, BSL tests
 │   │   ├── startup.s            # Vector table, stack setup, VFP/NEON enable
 │   │   ├── sprd_uart.c          # Baremetal UART driver
 │   │   ├── gc9307.c             # Baremetal GC9307 LCD driver & test pattern
 │   │   ├── st7735.c             # Baremetal ST7735 outer sub-display driver
 │   │   ├── sfc.c                # Baremetal SPI NAND / SFC flash driver
+│   │   ├── bsl.c                # Baremetal BSL HDLC & CRC16 protocol driver
 │   │   ├── kpd.c                # Baremetal Keypad and Hall flip sensor driver
 │   │   ├── linker.ld            # Linker script targeting T107 memory map
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
 │   └── unit/
-│       └── test_memory_map.py   # Automated memory map & payload tests
+│       ├── test_memory_map.py   # Automated memory map & peripheral tests
+│       └── test_bsl_protocol.py # BSL protocol framing, CRC16, and FDL loader tests
 ├── tools/
 │   ├── n2660emu.py              # Unified CLI emulator launcher
 │   ├── unicorn_runner.py        # Unicorn VM runner with exact T107 MMIO
+│   ├── bsl_engine.py            # Spreadtrum BSL protocol engine (Client & Server)
 │   ├── pac_extractor.py         # Spreadtrum .PAC vendor firmware extractor
 │   └── disasm.py                # Capstone disassembler with T107 annotations
 ├── Makefile                     # Root build & test Makefile
@@ -164,14 +168,17 @@ Output:
 [NAND] JEDEC Identification: 0x00EFAA21 (Winbond W25N01GV)
 [XIP] Direct Flash Window read at 0x60040000: 0xAA000000
 [PASS] SPI NAND JEDEC ID, page programming, cache readback & XIP verified.
+[TEST] Testing Spreadtrum BSL Protocol Engine & FDL Staging...
+[BSL] CRC16 test vector: 0x0000EBB5
+[PASS] Spreadtrum BSL protocol framing, CRC16 & FDL1 loading verified.
 [TEST] Triggering MMIO read at unmapped address 0x40001000...
 
-[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x800005D0
+[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x800008D4
 [INFO] Unmapped MMIO read returned: 0x00000000
 
 --------------------------------------------------------
-[RESULT] *** ALL PHASE 1, 2, AND 3 (DUAL DISPLAY, INPUT & STORAGE) CHECKS PASSED ***
-[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD & SPI NAND OK!
+[RESULT] *** ALL PHASE 1, 2, 3, AND 4 (BSL & FDL) CHECKS PASSED ***
+[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC & BSL OK!
 --------------------------------------------------------
 ```
 
@@ -188,13 +195,26 @@ Mount external raw flash images, sparse partition dumps, or partitions extracted
 ./bin/n2660emu tests/baremetal/test_firmware.bin --flash flash_dump.bin
 ```
 
-### 5. Run with Instruction Tracing
+### 5. Execute FDL1 & Simulate BootROM BSL Download Handshake
+Load first-stage bootloader `fdl1.bin` into SRAM (`0x00006200`) and optionally simulate the Spreadtrum BSL HDLC protocol handshake over UART0:
+```bash
+# Direct FDL1 staging into SRAM and execution:
+./bin/n2660emu --fdl1 extracted_fw/fdl1.bin
+
+# Simulate BootROM BSL protocol handshake (0x7E framing, CRC-16, ACK sequence):
+./bin/n2660emu --fdl1 extracted_fw/fdl1.bin --bsl
+
+# Stage both FDL1 (SRAM 0x00006200) and FDL2 (DRAM 0x80100000):
+./bin/n2660emu --fdl1 extracted_fw/fdl1.bin --fdl2 extracted_fw/fdl2.bin --bsl
+```
+
+### 6. Run with Instruction Tracing
 Trace CPU instructions as they execute in real time:
 ```bash
 make trace
 ```
 
-### 6. Render Primary and Secondary Sub-Displays
+### 7. Render Primary and Secondary Sub-Displays
 Render test graphics and dump high-resolution framebuffer PPM images:
 ```bash
 # Render and dump 240x320 main display:
@@ -204,12 +224,12 @@ make screen
 make sub-screen
 ```
 
-### 7. Run Automated Unit Tests
+### 8. Run Automated Unit Tests
 ```bash
 make test
 ```
 
-### 8. Disassemble Binary with Unisoc T107 Annotations
+### 9. Disassemble Binary with Unisoc T107 Annotations
 ```bash
 make disasm
 ```
@@ -245,8 +265,9 @@ To list partition layouts and load addresses without extracting:
 - [x] **Phase 1: CPU and Memory Emulation** (ARM Cortex-A7, SRAM, DRAM, SPRD UART, Baremetal test passed)
 - [x] **Phase 2: T107 Memory Map & Core SoC** (Timers, GPIO, MMIO access logging, down-counter verification)
 - [x] **Phase 3: Nokia Peripherals (Displays, Input & Storage)** (SPRD SPI0 & SPI1, GC9307 main LCD, ST7735 sub-screen, SPRD KPD matrix, Hall flip sensor, 128 MB SPI NAND & SFC)
+- [x] **Phase 4: Spreadtrum BSL Protocol Engine & FDL Loader** (HDLC framing, CRC16, BootROM BSL handshake simulation, FDL1 SRAM / FDL2 DRAM staging)
 - [ ] **Phase 3 (Cont.): Audio Subsystem** (SPRD Audio DAC, I2S, loudspeaker & buzzer interface)
-- [ ] **Phase 4: Firmware Execution** (FDL1 DDR init, FDL2 flash ops, BOOT0/BOOT1, MOCOR OS)
+- [ ] **Phase 4 (Cont.): MOCOR OS Bringup** (FDL1 DDR init, FDL2 flash ops, BOOT0/BOOT1, MOCOR OS)
 - [ ] **Phase 5: OpenFeatureOS Development** (Custom kernel bringup and verification)
 
 ---

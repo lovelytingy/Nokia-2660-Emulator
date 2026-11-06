@@ -12,6 +12,7 @@
 #include "kpd.h"
 #include "st7735.h"
 #include "sfc.h"
+#include "bsl.h"
 
 /* Peripheral Base Addresses */
 #define SPRD_TIMERS_BASE   0x50030000
@@ -264,7 +265,70 @@ int main(void)
         uart_puts("[FAIL] SPI NAND data mismatch or invalid JEDEC ID.\n");
     }
 
-    /* 10. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 10. Spreadtrum BSL Protocol Engine & FDL Loading Test */
+    uart_puts("[TEST] Testing Spreadtrum BSL Protocol Engine & FDL Staging...\n");
+    int bsl_ok = 1;
+
+    /* Verify CCITT CRC-16 calculation */
+    const uint8_t crc_test_data[] = "SPRD3\x00\x01\x02\x03Hello";
+    uint16_t computed_crc = bsl_crc16(0, crc_test_data, sizeof(crc_test_data) - 1);
+    uart_puts("[BSL] CRC16 test vector: ");
+    uart_puthex32((uint32_t)computed_crc);
+    uart_puts("\n");
+    if (computed_crc != 0xEBB5) {
+        bsl_ok = 0;
+    }
+
+    /* Encode BSL_CMD_START_DATA for FDL1 at 0x00006200 */
+    uint8_t start_payload[8] = {
+        0x00, 0x00, 0x62, 0x00,  /* Target Address: 0x00006200 */
+        0x00, 0x00, 0x00, 0x40   /* Data Size: 64 bytes */
+    };
+    uint8_t enc_frame[256];
+    int enc_len = bsl_encode(BSL_CMD_START_DATA, start_payload, sizeof(start_payload), enc_frame, sizeof(enc_frame));
+    if (enc_len <= 0) {
+        bsl_ok = 0;
+    }
+
+    /* Decode frame */
+    uint16_t dec_type = 0;
+    uint8_t dec_payload[128];
+    uint16_t dec_len = 0;
+    int dec_res = bsl_decode(enc_frame, (size_t)enc_len, &dec_type, dec_payload, &dec_len);
+    if (dec_res != 0 || dec_type != BSL_CMD_START_DATA || dec_len != 8) {
+        bsl_ok = 0;
+    }
+
+    /* Stage mock FDL1 payload chunk into IRAM at 0x00006200 */
+    uint8_t fdl1_chunk[64];
+    for (int i = 0; i < 64; i++) {
+        fdl1_chunk[i] = (uint8_t)(0xA0 + (i & 0x0F));
+    }
+    enc_len = bsl_encode(BSL_CMD_MIDST_DATA, fdl1_chunk, sizeof(fdl1_chunk), enc_frame, sizeof(enc_frame));
+    dec_res = bsl_decode(enc_frame, (size_t)enc_len, &dec_type, dec_payload, &dec_len);
+    if (dec_res == 0 && dec_type == BSL_CMD_MIDST_DATA && dec_len == 64) {
+        volatile uint8_t *iram_fdl1 = (volatile uint8_t *)0x00006200;
+        for (int i = 0; i < 64; i++) {
+            iram_fdl1[i] = dec_payload[i];
+        }
+        /* Verify staged payload in IRAM */
+        for (int i = 0; i < 64; i++) {
+            if (iram_fdl1[i] != fdl1_chunk[i]) {
+                bsl_ok = 0;
+                break;
+            }
+        }
+    } else {
+        bsl_ok = 0;
+    }
+
+    if (bsl_ok) {
+        uart_puts("[PASS] Spreadtrum BSL protocol framing, CRC16 & FDL1 loading verified.\n");
+    } else {
+        uart_puts("[FAIL] Spreadtrum BSL protocol verification failed.\n");
+    }
+
+    /* 11. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -272,11 +336,11 @@ int main(void)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 11. Summary */
+    /* 12. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1, 2, AND 3 (DUAL DISPLAY, INPUT & STORAGE) CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD & SPI NAND OK!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3, AND 4 (BSL & FDL) CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC & BSL OK!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }
