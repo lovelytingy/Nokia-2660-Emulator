@@ -221,3 +221,17 @@ To list partition layouts and load addresses without extracting:
 - [ ] **Phase 3 (Cont.): Storage & Audio** (SPI NAND flash storage, audio / codec interface)
 - [ ] **Phase 4: Firmware Execution** (FDL1 DDR init, FDL2 flash ops, BOOT0/BOOT1, MOCOR OS)
 - [ ] **Phase 5: OpenFeatureOS Development** (Custom kernel bringup and verification)
+
+---
+
+## ❤️ Support My Work
+
+I am an independent developer building and maintaining this open-source emulator. If you find this project valuable, voluntary contributions help support continued development, hardware research, and ongoing improvements.
+
+<a href="https://buymeacoffee.com/lovelytingy"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50"></a>
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
