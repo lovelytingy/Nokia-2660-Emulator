@@ -106,6 +106,24 @@ def run_qemu_system(firmware_path, machine="virt", cpu="cortex-a7", ram="48M", g
         print("\n[N2660Emu] Session terminated by user.")
         return 0
 
+def run_interactive_gui(bin_path, entry_addr=0x80000000, flip="open", view="main", fps=30, slice_insns=25000, headless=False, timeout=2.0):
+    script_path = os.path.join(PROJECT_ROOT, "tools", "gui_runner.py")
+    cmd = [
+        sys.executable,
+        script_path,
+        "--entry", hex(entry_addr),
+        "--flip", flip,
+        "--view", view,
+        "--fps", str(fps),
+        "--slice", str(slice_insns)
+    ]
+    if bin_path:
+        cmd.append(bin_path)
+    if headless:
+        cmd.extend(["--headless", "--timeout", str(timeout)])
+    res = subprocess.run(cmd)
+    return res.returncode
+
 def main():
     parser = argparse.ArgumentParser(
         description="N2660Emu: Nokia 2660 Flip (Unisoc T107) Emulation Environment",
@@ -154,14 +172,38 @@ Examples:
     parser.add_argument("--atags-addr", type=lambda x: int(x, 0), default=0x80000100, help="Physical DRAM address to stage ATAGS (default: 0x80000100)")
     parser.add_argument("--board-id", type=lambda x: int(x, 0), default=0x9117, help="ARM machine/board ID in r1 (default: 0x9117)")
     parser.add_argument("--cmdline", type=str, default=None, help="Kernel command line string passed via ATAG_CMDLINE")
+    parser.add_argument("-i", "--interactive", action="store_true",
+                        help="Launch interactive terminal GUI with live LCD, keypad matrix, and telemetry")
+    parser.add_argument("--view", choices=["main", "sub", "dual"], default="main",
+                        help="Initial display view for interactive mode (default: main)")
+    parser.add_argument("--fps", type=int, default=30, help="Target UI refresh rate for interactive mode (default: 30)")
 
     args, unknown = parser.parse_known_args()
+
+    fw_path = os.path.abspath(args.firmware) if args.firmware else None
+
+    # Interactive Terminal GUI Mode
+    if args.interactive:
+        demo_fw = fw_path
+        if not demo_fw:
+            candidates = [
+                os.path.join(PROJECT_ROOT, "tests", "baremetal", "interactive_demo.bin"),
+                os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")
+            ]
+            for c in candidates:
+                if os.path.isfile(c):
+                    demo_fw = c
+                    break
+        if not demo_fw:
+            print("Error: No firmware specified for interactive mode and default binary not found.")
+            sys.exit(1)
+        ret = run_interactive_gui(demo_fw, entry_addr=args.entry, flip=args.flip, view=args.view, fps=args.fps)
+        sys.exit(ret)
 
     if not args.firmware and not args.fdl1 and not args.bootrom and not args.boot0 and not args.pac:
         print("Error: Either firmware, --fdl1, --bootrom, --boot0, or --pac must be specified.")
         sys.exit(1)
 
-    fw_path = os.path.abspath(args.firmware) if args.firmware else None
     if fw_path and not os.path.isfile(fw_path):
         print(f"Error: Firmware file '{fw_path}' does not exist.")
         sys.exit(1)

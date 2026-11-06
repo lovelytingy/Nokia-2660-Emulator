@@ -92,11 +92,14 @@ Nokia-2660-Emulator/
 ├── tests/
 │   ├── baremetal/               # ARM Cortex-A7 baremetal verification firmware
 │   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, INTC, Displays, KPD, Flash, Audio, BootROM & ATAGS
+│   │   ├── interactive_demo.c   # Interactive Nokia OS demo (Dialing, Calling, Menu, Flip & Audio tones)
 │   │   ├── startup.s            # Vector table, stack setup, boot register handoff, IRQ handler, VFP/NEON enable
 │   │   ├── atags.c              # Baremetal ARM Boot Tags (ATAGS) driver & validator
 │   │   ├── atags.h              # ATAGS structures & ARM handoff declarations
 │   │   ├── intc.c               # Baremetal SPRD INTC driver, ISR dispatcher & register controls
 │   │   ├── intc.h               # INTC registers, IRQ channel numbers & CPU interrupt APIs
+│   │   ├── font5x7.c            # 5x7 ASCII bitmap font implementation & character renderer
+│   │   ├── font5x7.h            # Font definitions & display string drawing routines
 │   │   ├── bootrom.c            # Baremetal BootROM reset vector & BOOT0 loader driver
 │   │   ├── bootrom.h            # SPRD BOOT0 header definition & loader API
 │   │   ├── sprd_uart.c          # Baremetal UART driver
@@ -109,6 +112,7 @@ Nokia-2660-Emulator/
 │   │   ├── linker.ld            # Linker script targeting T107 memory map (with 4 KB IRQ stack)
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
 │   └── unit/
+│       ├── test_gui_runner.py   # Interactive GUI, downsampling, key injection & headless tests
 │       ├── test_intc.py         # SPRD INTC registers, soft IRQ, FIQ routing & vector tests
 │       ├── test_atags.py        # ARM Boot Tags synthesizer, parser & handoff tests
 │       ├── test_bootrom.py      # BootROM reset vector, BOOT0 packaging & boot flow tests
@@ -116,6 +120,7 @@ Nokia-2660-Emulator/
 │       ├── test_memory_map.py   # Automated memory map & peripheral tests
 │       └── test_bsl_protocol.py # BSL protocol framing, CRC16, and FDL loader tests
 ├── tools/
+│   ├── gui_runner.py            # Interactive Real-Time Terminal GUI & Keypad Runner
 │   ├── n2660emu.py              # Unified CLI emulator launcher
 │   ├── unicorn_runner.py        # Unicorn VM runner with exact T107 MMIO
 │   ├── atags.py                 # ARM Boot Tags (ATAGS) generator & inspector
@@ -225,7 +230,30 @@ Output:
 --------------------------------------------------------
 ```
 
-### 3. Execute Hardware BootROM & Multi-Stage Boot (BOOT0 vs BSL)
+### 3. Interactive Real-Time Terminal GUI & Keypad (`make interactive` or `n2660emu -i`)
+Launch the real-time terminal user interface featuring 24-bit ANSI Truecolor dual-display rendering, visual T9 keypad matrix, hardware telemetry, and live serial console:
+```bash
+make interactive
+# or via CLI launcher:
+./bin/n2660emu -i
+# or with dual-display mode:
+./tools/gui_runner.py tests/baremetal/interactive_demo.bin --view dual
+```
+
+**Controls in Interactive Mode**:
+- **Numeric Keys `0`–`9`, `*`, `#`**: Types digits into the dialing buffer with authentic key click audio beeps (`1200 Hz`).
+- **Call Key `c`**: Dials the entered number, connecting an active call with dial tone (`440 Hz`).
+- **End / Power Key `x`**: Terminates call with disconnect tone (`350 Hz`) and clears to Home screen.
+- **Left SoftKey `[`**: Opens the Main Menu (Call Log, Contacts, Messages, Settings, Snake).
+- **Right SoftKey `]`**: Back / Clears single dialed digit.
+- **D-Pad Arrows `Up`/`Down`**: Navigates through menu options with live selection highlight.
+- **Flip Key `f`**: Toggles Hall effect clamshell sensor (Open $\leftrightarrow$ Closed); activates the outer ST7735 screen clock when closed.
+- **Display View `v`**: Toggles between Main Screen, Sub Screen, and Dual Screen view.
+- **Execution `p`**: Pause / Resume execution.
+- **Step `t` / `s`**: Single-step 1 instruction / 1,000 instructions (when paused).
+- **Quit `q`**: Restores terminal and exits cleanly.
+
+### 4. Execute Hardware BootROM & Multi-Stage Boot (BOOT0 vs BSL)
 Execute the clean-room ARMv7-A BootROM starting at the reset vector (`0x00000000`):
 ```bash
 # 1. Cold boot with BOOT0 image in SPI NAND Block 0:
@@ -238,27 +266,27 @@ Execute the clean-room ARMv7-A BootROM starting at the reset vector (`0x00000000
 ./bin/n2660emu --bootrom
 ```
 
-### 4. Package Raw Binaries into Unisoc SPRD BOOT0 Containers
+### 5. Package Raw Binaries into Unisoc SPRD BOOT0 Containers
 Use `tools/mksprd_img.py` to wrap any baremetal payload with standard 32-byte SPRD headers:
 ```bash
 python3 tools/mksprd_img.py create -i payload.bin -o boot0.bin --load-addr 0x00006200 --entry 0x00006200
 python3 tools/mksprd_img.py verify boot0.bin
 ```
 
-### 5. Simulate Keypad Input and Flip Opening / Closing
+### 6. Simulate Keypad Input and Flip Opening / Closing
 Simulate hardware key events and flip states dynamically via CLI arguments:
 ```bash
 # Simulate pressing '5' and 'OK' with clamshell closed:
 ./bin/n2660emu tests/baremetal/test_firmware.bin --flip closed --key 5 --key ok
 ```
 
-### 6. Mount Custom SPI NAND Flash Images
+### 7. Mount Custom SPI NAND Flash Images
 Mount external raw flash images, sparse partition dumps, or partitions extracted from vendor `.PAC` packages:
 ```bash
 ./bin/n2660emu tests/baremetal/test_firmware.bin --flash flash_dump.bin
 ```
 
-### 7. Execute FDL1 & Simulate BootROM BSL Download Handshake
+### 8. Execute FDL1 & Simulate BootROM BSL Download Handshake
 Load first-stage bootloader `fdl1.bin` into SRAM (`0x00006200`) and optionally simulate the Spreadtrum BSL HDLC protocol handshake over UART0:
 ```bash
 # Direct FDL1 staging into SRAM and execution:
@@ -271,19 +299,19 @@ Load first-stage bootloader `fdl1.bin` into SRAM (`0x00006200`) and optionally s
 ./bin/n2660emu --fdl1 extracted_fw/fdl1.bin --fdl2 extracted_fw/fdl2.bin --bsl
 ```
 
-### 8. Capture Audio and Buzzer Tones to WAV
+### 9. Capture Audio and Buzzer Tones to WAV
 Capture PCM audio playback and hardware buzzer tone generation to a standard 16-bit 44.1 kHz stereo WAV file:
 ```bash
 ./bin/n2660emu tests/baremetal/test_firmware.bin --audio-dump audio_capture.wav
 ```
 
-### 9. Run with Instruction Tracing
+### 10. Run with Instruction Tracing
 Trace CPU instructions as they execute in real time:
 ```bash
 make trace
 ```
 
-### 10. Render Primary and Secondary Sub-Displays
+### 11. Render Primary and Secondary Sub-Displays
 Render test graphics and dump high-resolution framebuffer PPM images:
 ```bash
 # Render and dump 240x320 main display:
@@ -293,12 +321,12 @@ make screen
 make sub-screen
 ```
 
-### 11. Run Automated Unit Tests
+### 12. Run Automated Unit Tests
 ```bash
 make test
 ```
 
-### 12. Disassemble Binary with Unisoc T107 Annotations
+### 13. Disassemble Binary with Unisoc T107 Annotations
 ```bash
 make disasm
 ```

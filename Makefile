@@ -16,6 +16,9 @@ test: firmware bootrom
 run: firmware
 	./bin/n2660emu tests/baremetal/test_firmware.bin --engine unicorn
 
+interactive: firmware
+	./bin/n2660emu -i
+
 trace: firmware
 	./bin/n2660emu tests/baremetal/test_firmware.bin --engine unicorn --trace
 

@@ -1041,6 +1041,23 @@ class T107UnicornVM:
         print(f"[VM ATAGS] Staged ARM Boot Tags ({len(data)} bytes) at 0x{atags_addr:08X} (r0=0, r1=0x{board_id:04X}, r2=0x{atags_addr:08X})")
         return len(data)
 
+    def init_cpu(self, entry_point):
+        """Initializes Cortex-A7 registers for execution."""
+        self.uc.reg_write(UC_ARM_REG_CPSR, 0xD3)
+        self.uc.reg_write(UC_ARM_REG_PC, entry_point)
+
+    def step(self, count=1, timeout_us=0):
+        """
+        Executes up to count instructions from current PC.
+        Returns (success: bool, error: str or None).
+        """
+        pc = self.uc.reg_read(UC_ARM_REG_PC)
+        try:
+            self.uc.emu_start(pc, 0xFFFFFFFF, timeout=timeout_us, count=count)
+            return True, None
+        except UcError as e:
+            return False, str(e)
+
     def run(self, entry_point, end_address=None, timeout_sec=10):
         # Setup Cortex-A7 initial registers
         # CPSR: Supervisor mode (0x13), IRQ/FIQ disabled (0xD3)
@@ -1203,6 +1220,9 @@ class T107UnicornVM:
             wf.setframerate(sample_rate)
             wf.writeframes(raw_samples)
         print(f"[N2660Emu Audio] Saved audio dump to '{file_path}' ({len(raw_samples)//4} frames, 44.1 kHz stereo)")
+
+# Alias for compatibility
+N2660VM = T107UnicornVM
 
 def main():
     parser = argparse.ArgumentParser(description="N2660Emu Unicorn VM Runner")
