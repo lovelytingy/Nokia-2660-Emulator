@@ -66,6 +66,7 @@ static void t107_soc_init(Object *obj)
     object_initialize_child(obj, "lcd", &s->lcd, TYPE_GC9307);
     object_initialize_child(obj, "spi1", &s->spi1, TYPE_SPRD_SPI);
     object_initialize_child(obj, "sub_lcd", &s->sub_lcd, TYPE_ST7735);
+    object_initialize_child(obj, "sfc", &s->sfc, TYPE_SPRD_SFC);
 }
 
 static void t107_soc_realize(DeviceState *dev, Error **errp)
@@ -154,6 +155,16 @@ static void t107_soc_realize(DeviceState *dev, Error **errp)
     }
     memory_region_add_subregion_overlap(sysmem, T107_SPI1_BASE,
                                         sysbus_mmio_get_region(spi1_sbd, 0), 1);
+
+    /* 10. Serial Flash Controller & SPI NAND Direct Window (0x500A0000 & 0x60000000) */
+    SysBusDevice *sfc_sbd = SYS_BUS_DEVICE(&s->sfc);
+    if (!sysbus_realize(sfc_sbd, errp)) {
+        return;
+    }
+    memory_region_add_subregion_overlap(sysmem, T107_SFC_BASE,
+                                        sysbus_mmio_get_region(sfc_sbd, 0), 1);
+    memory_region_add_subregion_overlap(sysmem, T107_FLASH_BASE,
+                                        sysbus_mmio_get_region(sfc_sbd, 1), 1);
 }
 
 static Property t107_soc_properties[] = {

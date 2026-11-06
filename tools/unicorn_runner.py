@@ -98,6 +98,43 @@ GC9307_HEIGHT    = 320
 ST7735_WIDTH     = 120
 ST7735_HEIGHT    = 160
 
+SPRD_SFC_BASE        = 0x500A0000
+SFC_CMD              = 0x0000
+SFC_ADDR             = 0x0004
+SFC_DATA             = 0x0008
+SFC_CTL              = 0x000C
+SFC_STS              = 0x0010
+SFC_BUF_PTR          = 0x0014
+SFC_INT_EN           = 0x0018
+SFC_INT_CLR          = 0x001C
+
+FLASH_DIRECT_BASE    = 0x60000000
+FLASH_DIRECT_SIZE    = 16 * 1024 * 1024 # 16 MB mapped direct window
+FLASH_TOTAL_SIZE     = 128 * 1024 * 1024 # 128 MB full flash size
+
+NAND_PAGE_SIZE       = 2048
+NAND_SPARE_SIZE      = 64
+NAND_PAGE_TOTAL_SIZE = 2112
+NAND_PAGES_PER_BLOCK = 64
+NAND_BLOCK_SIZE      = 64 * 2048 # 128 KB
+NAND_BLOCK_COUNT     = 1024
+
+NAND_CMD_RESET         = 0xFF
+NAND_CMD_READ_ID       = 0x9F
+NAND_CMD_PAGE_READ     = 0x13
+NAND_CMD_READ_CACHE    = 0x03
+NAND_CMD_READ_FAST     = 0x0B
+NAND_CMD_WRITE_ENABLE  = 0x06
+NAND_CMD_WRITE_DISABLE = 0x04
+NAND_CMD_PROGRAM_LOAD  = 0x02
+NAND_CMD_PROGRAM_EXEC  = 0x10
+NAND_CMD_BLOCK_ERASE   = 0xD8
+NAND_CMD_GET_FEATURE   = 0x0F
+NAND_CMD_SET_FEATURE   = 0x1F
+
+JEDEC_MFR_WINBOND      = 0xEF
+JEDEC_DEV_W25N01GV     = 0xAA21
+
 PL011_UART_BASE = 0x09000000
 
 class T107UnicornVM:
@@ -164,6 +201,20 @@ class T107UnicornVM:
         self.sub_lcd_pixel_high = None
         self.sub_spi_dc_mode = False
 
+        # SPI NAND Flash & Serial Flash Controller State
+        self.flash_storage = bytearray(b'\xFF' * FLASH_DIRECT_SIZE)
+        self.nand_page_buffer = bytearray(b'\xFF' * NAND_PAGE_TOTAL_SIZE)
+        self.sfc_cmd = 0
+        self.sfc_addr = 0
+        self.sfc_ctl = 0
+        self.sfc_sts = 0x02  # Ready / Done
+        self.sfc_buf_ptr = 0
+        self.sfc_int_en = 0
+        self.nand_write_enabled = False
+        self.nand_status_reg1 = 0x00
+        self.nand_status_reg2 = 0x18
+        self.nand_status_reg3 = 0x00
+
         # Map Memory Regions
         # 1. Internal SRAM
         self.uc.mem_map(SRAM_BASE, SRAM_SIZE)
@@ -172,16 +223,21 @@ class T107UnicornVM:
         self.dram_map_size = 16 * 1024 * 1024
         self.uc.mem_map(DRAM_BASE, self.dram_map_size)
 
-        # 3. Peripheral MMIO space (map pages for SPRD UART, Timers, GPIO, KPD, SPI0, SPI1, PL011)
+        # 3. Peripheral MMIO space (map pages for SPRD UART, Timers, GPIO, KPD, SPI0, SPI1, SFC, PL011)
         self.uc.mem_map(SPRD_UART0_BASE, 0x1000)
         self.uc.mem_map(SPRD_TIMERS_BASE, 0x1000)
         self.uc.mem_map(SPRD_GPIO_BASE, 0x1000)
         self.uc.mem_map(SPRD_KPD_BASE, 0x1000)
         self.uc.mem_map(SPRD_SPI0_BASE, 0x1000)
         self.uc.mem_map(SPRD_SPI1_BASE, 0x1000)
+        self.uc.mem_map(SPRD_SFC_BASE, 0x1000)
         self.uc.mem_map(PL011_UART_BASE, 0x1000)
         # Also map page around 0x40001000 to test unmapped traps
         self.uc.mem_map(0x40001000 & ~0xFFF, 0x1000)
+
+        # 4. Direct Flash Read Window (16 MB window at 0x60000000)
+        self.uc.mem_map(FLASH_DIRECT_BASE, FLASH_DIRECT_SIZE)
+        self.uc.mem_write(FLASH_DIRECT_BASE, bytes(self.flash_storage))
 
         # Register Hooks
         self.uc.hook_add(UC_HOOK_MEM_WRITE, self._hook_mem_write)
@@ -377,7 +433,86 @@ class T107UnicornVM:
                                     self.sub_lcd_cur_y = self.sub_lcd_row_start
             return
 
-        # 7. Catch-all unknown peripheral writes
+        # 7. SPRD Serial Flash Controller (SFC) & SPI NAND (0x500A0000)
+        if SPRD_SFC_BASE <= address < (SPRD_SFC_BASE + 0x1000):
+            offset = address - SPRD_SFC_BASE
+            if offset == SFC_CMD:
+                self.sfc_cmd = value & 0xFF
+                cmd = self.sfc_cmd
+                if cmd == NAND_CMD_RESET:
+                    self.nand_write_enabled = False
+                    self.sfc_buf_ptr = 0
+                    self.nand_page_buffer = bytearray(b'\xFF' * NAND_PAGE_TOTAL_SIZE)
+                elif cmd == NAND_CMD_READ_ID:
+                    self.sfc_buf_ptr = 0
+                    self.nand_page_buffer[0] = JEDEC_MFR_WINBOND
+                    self.nand_page_buffer[1] = (JEDEC_DEV_W25N01GV >> 8) & 0xFF
+                    self.nand_page_buffer[2] = JEDEC_DEV_W25N01GV & 0xFF
+                    self.nand_page_buffer[3] = 0x00
+                elif cmd == NAND_CMD_PAGE_READ:
+                    page_idx = self.sfc_addr
+                    flash_offset = page_idx * NAND_PAGE_SIZE
+                    self.sfc_buf_ptr = 0
+                    if flash_offset + NAND_PAGE_SIZE <= len(self.flash_storage):
+                        self.nand_page_buffer[:NAND_PAGE_SIZE] = self.flash_storage[flash_offset : flash_offset + NAND_PAGE_SIZE]
+                    else:
+                        self.nand_page_buffer[:NAND_PAGE_SIZE] = b'\xFF' * NAND_PAGE_SIZE
+                elif cmd in (NAND_CMD_READ_CACHE, NAND_CMD_READ_FAST):
+                    self.sfc_buf_ptr = self.sfc_addr % NAND_PAGE_TOTAL_SIZE
+                elif cmd == NAND_CMD_WRITE_ENABLE:
+                    self.nand_write_enabled = True
+                    self.nand_status_reg3 |= 0x02
+                elif cmd == NAND_CMD_WRITE_DISABLE:
+                    self.nand_write_enabled = False
+                    self.nand_status_reg3 &= ~0x02
+                elif cmd == NAND_CMD_PROGRAM_LOAD:
+                    self.sfc_buf_ptr = self.sfc_addr % NAND_PAGE_TOTAL_SIZE
+                elif cmd == NAND_CMD_PROGRAM_EXEC:
+                    if self.nand_write_enabled:
+                        page_idx = self.sfc_addr
+                        flash_offset = page_idx * NAND_PAGE_SIZE
+                        if flash_offset + NAND_PAGE_SIZE <= len(self.flash_storage):
+                            for i in range(NAND_PAGE_SIZE):
+                                self.flash_storage[flash_offset + i] &= self.nand_page_buffer[i]
+                            if flash_offset + NAND_PAGE_SIZE <= FLASH_DIRECT_SIZE:
+                                self.uc.mem_write(FLASH_DIRECT_BASE + flash_offset, bytes(self.flash_storage[flash_offset : flash_offset + NAND_PAGE_SIZE]))
+                    self.nand_write_enabled = False
+                    self.nand_status_reg3 &= ~0x02
+                elif cmd == NAND_CMD_BLOCK_ERASE:
+                    if self.nand_write_enabled:
+                        block_idx = self.sfc_addr // NAND_PAGES_PER_BLOCK
+                        flash_offset = block_idx * NAND_BLOCK_SIZE
+                        if flash_offset + NAND_BLOCK_SIZE <= len(self.flash_storage):
+                            self.flash_storage[flash_offset : flash_offset + NAND_BLOCK_SIZE] = b'\xFF' * NAND_BLOCK_SIZE
+                            if flash_offset + NAND_BLOCK_SIZE <= FLASH_DIRECT_SIZE:
+                                self.uc.mem_write(FLASH_DIRECT_BASE + flash_offset, b'\xFF' * NAND_BLOCK_SIZE)
+                    self.nand_write_enabled = False
+                    self.nand_status_reg3 &= ~0x02
+                elif cmd == NAND_CMD_GET_FEATURE:
+                    self.sfc_buf_ptr = 0
+                    if self.sfc_addr == 0xC0:
+                        self.nand_page_buffer[0] = self.nand_status_reg3
+                    elif self.sfc_addr == 0xB0:
+                        self.nand_page_buffer[0] = self.nand_status_reg2
+                    else:
+                        self.nand_page_buffer[0] = self.nand_status_reg1
+                self.sfc_sts = 0x02  # Done / Ready
+            elif offset == SFC_ADDR:
+                self.sfc_addr = value & 0xFFFFFFFF
+            elif offset == SFC_DATA:
+                if self.sfc_buf_ptr + 4 <= NAND_PAGE_TOTAL_SIZE:
+                    self.nand_page_buffer[self.sfc_buf_ptr]     = value & 0xFF
+                    self.nand_page_buffer[self.sfc_buf_ptr + 1] = (value >> 8) & 0xFF
+                    self.nand_page_buffer[self.sfc_buf_ptr + 2] = (value >> 16) & 0xFF
+                    self.nand_page_buffer[self.sfc_buf_ptr + 3] = (value >> 24) & 0xFF
+                    self.sfc_buf_ptr += 4
+            elif offset == SFC_CTL:
+                self.sfc_ctl = value & 0xFFFFFFFF
+            elif offset == SFC_BUF_PTR:
+                self.sfc_buf_ptr = (value & 0xFFFFFFFF) % NAND_PAGE_TOTAL_SIZE
+            return
+
+        # 8. Catch-all unknown peripheral writes
         if 0x40000000 <= address < 0x60000000:
             pc = uc.reg_read(UC_ARM_REG_PC)
             print(f"\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{address:08X} = 0x{value:08X} (size {size}) from PC 0x{pc:08X}")
@@ -464,6 +599,36 @@ class T107UnicornVM:
                 uc.mem_write(address, (1 << 8).to_bytes(4, 'little'))
                 return
 
+        # 7. SPRD Serial Flash Controller (SFC)
+        if SPRD_SFC_BASE <= address < (SPRD_SFC_BASE + 0x1000):
+            offset = address - SPRD_SFC_BASE
+            if offset == SFC_CMD:
+                val = self.sfc_cmd
+            elif offset == SFC_ADDR:
+                val = self.sfc_addr
+            elif offset == SFC_DATA:
+                if self.sfc_buf_ptr + 4 <= NAND_PAGE_TOTAL_SIZE:
+                    val = (self.nand_page_buffer[self.sfc_buf_ptr] |
+                           (self.nand_page_buffer[self.sfc_buf_ptr + 1] << 8) |
+                           (self.nand_page_buffer[self.sfc_buf_ptr + 2] << 16) |
+                           (self.nand_page_buffer[self.sfc_buf_ptr + 3] << 24))
+                    self.sfc_buf_ptr += 4
+                elif self.sfc_buf_ptr < NAND_PAGE_TOTAL_SIZE:
+                    val = self.nand_page_buffer[self.sfc_buf_ptr]
+                    self.sfc_buf_ptr += 1
+                else:
+                    val = 0xFFFFFFFF
+            elif offset == SFC_CTL:
+                val = self.sfc_ctl
+            elif offset == SFC_STS:
+                val = self.sfc_sts
+            elif offset == SFC_BUF_PTR:
+                val = self.sfc_buf_ptr
+            else:
+                val = 0
+            uc.mem_write(address, (val & 0xFFFFFFFF).to_bytes(4, 'little'))
+            return
+
         # 4. Catch-all unknown peripheral reads
         if 0x40000000 <= address < 0x60000000:
             pc = uc.reg_read(UC_ARM_REG_PC)
@@ -480,6 +645,19 @@ class T107UnicornVM:
             data = f.read()
         print(f"[VM] Loading binary '{binary_path}' ({len(data)} bytes) to address 0x{load_addr:08X}...")
         self.uc.mem_write(load_addr, data)
+
+    def load_flash_image(self, file_path, offset=0):
+        """Loads a raw binary flash image or partition into flash memory."""
+        with open(file_path, "rb") as f:
+            data = f.read()
+        end = offset + len(data)
+        if end > len(self.flash_storage):
+            self.flash_storage.extend(b'\xFF' * (end - len(self.flash_storage)))
+        self.flash_storage[offset:end] = data
+        direct_len = min(len(data), max(0, FLASH_DIRECT_SIZE - offset))
+        if direct_len > 0:
+            self.uc.mem_write(FLASH_DIRECT_BASE + offset, bytes(self.flash_storage[offset : offset + direct_len]))
+        print(f"[VM Flash] Loaded '{file_path}' ({len(data)} bytes) at flash offset 0x{offset:08X}")
 
     def run(self, entry_point, end_address=None, timeout_sec=10):
         # Setup Cortex-A7 initial registers
@@ -609,6 +787,7 @@ def main():
     parser.add_argument("--preview-sub-screen", action="store_true", help="Render ANSI truecolor outer sub-screen in terminal")
     parser.add_argument("--key", type=str, action="append", help="Inject key press (e.g. --key 5 or --key ok)")
     parser.add_argument("--flip", choices=["open", "closed"], default="open", help="Hall effect flip sensor initial state (default: open)")
+    parser.add_argument("--flash", type=str, default=None, help="Path to raw SPI NAND flash image to mount")
     args = parser.parse_args()
 
     if not os.path.isfile(args.binary):
@@ -617,6 +796,9 @@ def main():
 
     vm = T107UnicornVM(trace_instructions=args.trace, max_instructions=args.max_insns)
     vm.set_flip_state(args.flip == "open")
+
+    if args.flash:
+        vm.load_flash_image(args.flash)
 
     if args.key:
         for k in args.key:

@@ -11,6 +11,7 @@
 #include "gc9307.h"
 #include "kpd.h"
 #include "st7735.h"
+#include "sfc.h"
 
 /* Peripheral Base Addresses */
 #define SPRD_TIMERS_BASE   0x50030000
@@ -218,7 +219,52 @@ int main(void)
     uart_puts("[PASS] Outer sub-display rendering test completed.\n");
     int sub_lcd_ok = 1;
 
-    /* 9. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 9. Unisoc SPRD Serial Flash Controller (SFC) & 128 MB SPI NAND Test */
+    uart_puts("[TEST] Testing Unisoc SFC & SPI NAND Flash at 0x500A0000...\n");
+    sfc_init();
+
+    uint32_t jedec_id = sfc_read_jedec_id();
+    uart_puts("[NAND] JEDEC Identification: ");
+    uart_puthex32(jedec_id);
+    uart_puts(" (Winbond W25N01GV)\n");
+
+    /* Program test pattern to Page 128 (Block 2 Page 0) */
+    uint32_t test_page = 128;
+    sfc_block_erase(2); /* Erase Block 2 */
+
+    uint32_t write_buf[16];
+    for (int i = 0; i < 16; i++) {
+        write_buf[i] = 0xAA000000 | (i * 0x1111);
+    }
+    sfc_program_page(test_page, (const uint8_t *)write_buf, sizeof(write_buf));
+
+    /* Read back via page read into cache */
+    sfc_page_read(test_page);
+    uint32_t readback_buf[16];
+    sfc_read_cache(0, (uint8_t *)readback_buf, sizeof(readback_buf));
+
+    int flash_ok = 1;
+    for (int i = 0; i < 16; i++) {
+        if (readback_buf[i] != write_buf[i]) {
+            flash_ok = 0;
+            break;
+        }
+    }
+
+    /* Test Direct Flash Read Window at 0x60000000 */
+    volatile uint32_t *direct_flash = (volatile uint32_t *)(SPRD_FLASH_DIRECT_BASE + (test_page * 2048));
+    uint32_t direct_val = *direct_flash;
+    uart_puts("[XIP] Direct Flash Window read at 0x60040000: ");
+    uart_puthex32(direct_val);
+    uart_puts("\n");
+
+    if (flash_ok && (direct_val == write_buf[0]) && (jedec_id == 0x00EFAA21 || (jedec_id & 0xFF0000) == 0xEF0000)) {
+        uart_puts("[PASS] SPI NAND JEDEC ID, page programming, cache readback & XIP verified.\n");
+    } else {
+        uart_puts("[FAIL] SPI NAND data mismatch or invalid JEDEC ID.\n");
+    }
+
+    /* 10. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -226,11 +272,11 @@ int main(void)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 10. Summary */
+    /* 11. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1, 2, AND 3 (DUAL DISPLAY & INPUT) CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip & Sub-LCD OK!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1, 2, AND 3 (DUAL DISPLAY, INPUT & STORAGE) CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD & SPI NAND OK!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }

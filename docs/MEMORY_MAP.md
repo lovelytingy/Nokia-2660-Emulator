@@ -15,8 +15,12 @@ The following table summarizes the verified physical memory addresses and device
 | `0x50010000 - 0x50010FFF` | 4 KB | SPRD UART1 | Secondary serial interface / AT command port. | Documented |
 | `0x50020000 - 0x50020FFF` | 4 KB | SPRD UART2 | Bluetooth / Modem communication port. | Documented |
 | `0x50030000 - 0x50030FFF` | 4 KB | SPRD Timers | High-resolution system tick and watchdog timers. | Documented |
-| `0x50040000 - 0x50040FFF` | 4 KB | SPRD GPIO / Keypad | Keypad matrix scanner and GPIO lines. | Documented |
-| `0x50080000 - 0x50080FFF` | 4 KB | SPRD SPI0 (LCD Controller) | High-speed SPI to GC9307 QVGA Display panel. | In progress |
+| `0x50040000 - 0x50040FFF` | 4 KB | SPRD GPIO Controller | General-purpose I/O & Hall effect flip sensor (Bank 0 Pin 0). | Verified |
+| `0x50060000 - 0x50060FFF` | 4 KB | SPRD Keypad Controller | 8x8 Hardware keypad matrix scanner (STATUS0 & STATUS1). | Verified |
+| `0x50080000 - 0x50080FFF` | 4 KB | SPRD SPI0 (GC9307 LCD) | High-speed SPI to primary 2.8" QVGA (240x320) display panel. | Verified |
+| `0x50090000 - 0x50090FFF` | 4 KB | SPRD SPI1 (ST7735 LCD) | SPI interface to secondary 1.77" QQVGA (120x160) outer screen. | Verified |
+| `0x500A0000 - 0x500A0FFF` | 4 KB | SPRD SFC (Flash Controller)| Serial Flash Controller interface to 128 MB SPI NAND flash. | Verified |
+| `0x60000000 - 0x67FFFFFF` | 128 MB | Direct Flash Window | High-speed direct memory read window (XIP) into SPI NAND. | Verified |
 | `0x70000000 - 0x7FFFFFFF` | 256 MB | System Bus Matrix / Crypto | Security engine, DMA controller, fast bus arbitration. | Documented |
 | `0x80000000 - 0x82FFFFFF` | 48 MB | System DRAM (LPDDR2) | Main physical RAM (Nokia 2660 configuration). `FDL2` loaded at `0x80100000`. Kernel loaded at `0x80000000+`. | Verified (`spd_dump` dumps & vendor specs) |
 | `0xFFFF0000 - 0xFFFFFFFF` | 64 KB | High Vector BootROM | CPU boot exception vector before remap to SRAM. | Standard ARMv7-A architecture |

@@ -149,3 +149,45 @@ The Nokia 2660 Flip incorporates an 8x8 matrix keypad interface and a Hall-effec
   - `Low (0)`: Flip Closed (clamshell shut, outer sub-display active).
 - **Interrupts**: Configured via SPRD GPIO Bank 0 interrupt sense and event registers to trigger wake-on-open and sleep-on-close events in MOCOR OS.
 
+---
+
+## 6. Serial Flash Controller (SFC) & 128 MB SPI NAND Storage
+
+The Nokia 2660 Flip TA-1480 utilizes a 128 MB (1 Gb) high-speed SPI NAND flash (Winbond W25N01GV or GigaDevice GD5F1GQ4) for all persistent system and user storage partitions.
+
+### Hardware Architecture
+- **SFC Base Address**: `0x500A0000`
+- **Direct Flash Read Window (XIP)**: `0x60000000` - `0x67FFFFFF` (up to 128 MB mapped space)
+- **Flash Geometry**:
+  - **Total Capacity**: 128 MB (1,048,576 bytes * 128)
+  - **Block Organization**: 1024 Blocks of 128 KB each
+  - **Page Organization**: 64 Pages per block (2048 bytes user data + 64 bytes spare / OOB ECC per page)
+  - **Internal Page Cache Buffer**: 2112 bytes
+
+### Register Map (`SPRD_SFC_BASE 0x500A0000`)
+| Offset | Register Name | Description | Access | Reset |
+| :--- | :--- | :--- | :--- | :--- |
+| `+0x0000` | `SFC_CMD` | Command Opcode (executes command on write) | R/W | `0x00000000` |
+| `+0x0004` | `SFC_ADDR` | Address Register (Page / Block address or Column offset) | R/W | `0x00000000` |
+| `+0x0008` | `SFC_DATA` | Data Register / Buffer FIFO (32-bit streaming word) | R/W | `0x00000000` |
+| `+0x000C` | `SFC_CTL` | Transfer Control Register | R/W | `0x00000000` |
+| `+0x0010` | `SFC_STS` | Status Register (Bit 0: Busy, Bit 1: Done/Ready) | R | `0x00000002` |
+| `+0x0014` | `SFC_BUF_PTR` | Internal 2112-byte Cache Buffer Pointer (0–2111) | R/W | `0x00000000` |
+
+### Supported SPI NAND Command Opcodes
+| Opcode | Command Name | Description |
+| :--- | :--- | :--- |
+| `0xFF` | `NAND_CMD_RESET` | Software Reset (resets buffer and clears Write Enable Latch) |
+| `0x9F` | `NAND_CMD_READ_ID` | JEDEC ID Read (returns Winbond `0xEF 0xAA 0x21` or GD `0xC8 0xB1 0x48`) |
+| `0x13` | `NAND_CMD_PAGE_READ` | Page Data Read (loads 2048+64 bytes from NAND flash page into buffer) |
+| `0x03` | `NAND_CMD_READ_CACHE` | Read Buffer (streams bytes out of internal page cache starting at column address) |
+| `0x0B` | `NAND_CMD_READ_FAST` | High-speed Read Buffer |
+| `0x06` | `NAND_CMD_WRITE_ENABLE` | Sets Write Enable Latch (WEL) in Status Register 3 |
+| `0x04` | `NAND_CMD_WRITE_DISABLE`| Clears Write Enable Latch |
+| `0x02` | `NAND_CMD_PROGRAM_LOAD` | Loads incoming data stream into internal page buffer |
+| `0x10` | `NAND_CMD_PROGRAM_EXEC` | Writes internal buffer contents into specified NAND flash array page |
+| `0xD8` | `NAND_CMD_BLOCK_ERASE` | Erases entire 128 KB block (resets all bytes in block to `0xFF`) |
+| `0x0F` | `NAND_CMD_GET_FEATURE` | Reads Status Registers (Protection, Configuration, Status) |
+| `0x1F` | `NAND_CMD_SET_FEATURE` | Writes Status Registers |
+
+

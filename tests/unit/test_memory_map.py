@@ -30,6 +30,7 @@ from tools.unicorn_runner import (
     SPRD_KPD_BASE, KPD_CTRL, KPD_INT_EN, KPD_INT_RAW, KPD_STATUS0, KPD_STATUS1,
     SPRD_SPI0_BASE, GC9307_WIDTH, GC9307_HEIGHT,
     SPRD_SPI1_BASE, ST7735_WIDTH, ST7735_HEIGHT,
+    SPRD_SFC_BASE, FLASH_DIRECT_BASE, FLASH_TOTAL_SIZE, NAND_PAGE_SIZE, NAND_BLOCK_SIZE,
     T107UnicornVM
 )
 
@@ -139,6 +140,27 @@ class TestN2660EmuMemoryMap(unittest.TestCase):
         self.assertEqual(vm.sub_framebuffer[70][60], 0x07FF)   # Digital clock box (Cyan)
         self.assertEqual(vm.sub_framebuffer[120][60], 0x0215)  # Notification banner (Nokia Blue)
         self.assertEqual(vm.sub_framebuffer[158][60], 0xFFFF)  # Bottom accent bar (White)
+
+    def test_sprd_sfc_and_spi_nand_flash(self):
+        self.assertEqual(SPRD_SFC_BASE, 0x500A0000)
+        self.assertEqual(FLASH_DIRECT_BASE, 0x60000000)
+        self.assertEqual(FLASH_TOTAL_SIZE, 128 * 1024 * 1024)
+        self.assertEqual(NAND_PAGE_SIZE, 2048)
+        self.assertEqual(NAND_BLOCK_SIZE, 128 * 1024)
+
+        bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")
+        vm = T107UnicornVM(trace_instructions=False)
+        vm.load_binary(bin_path, DRAM_BASE)
+        success = vm.run(entry_point=DRAM_BASE, timeout_sec=5)
+        self.assertTrue(success)
+
+        # Verify programmed page 128 (offset 128 * 2048 = 0x40000)
+        flash_offset = 128 * 2048
+        val0 = (vm.flash_storage[flash_offset] |
+                (vm.flash_storage[flash_offset + 1] << 8) |
+                (vm.flash_storage[flash_offset + 2] << 16) |
+                (vm.flash_storage[flash_offset + 3] << 24))
+        self.assertEqual(val0, 0xAA000000)
 
     def test_baremetal_payload_execution(self):
         bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")
