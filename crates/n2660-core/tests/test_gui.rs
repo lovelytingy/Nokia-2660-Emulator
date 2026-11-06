@@ -82,4 +82,27 @@ fn test_keypad_injection_and_flip_state() {
     let buf_out = demo_vm.get_uart_tx_buffer();
     let uart_out = String::from_utf8_lossy(&buf_out);
     assert!(uart_out.contains("[OS] Key Pressed: '5' | Number: 5"));
+
+    let fb = demo_vm.get_gc9307_framebuffer();
+    let mut non_zero = 0;
+    for y in 0..n2660_core::types::GC9307_HEIGHT {
+        for x in 0..n2660_core::types::GC9307_WIDTH {
+            if fb[y][x] != 0 {
+                non_zero += 1;
+            }
+        }
+    }
+    let sub_fb = demo_vm.get_st7735_framebuffer();
+    let mut sub_non_zero = 0;
+    for y in 0..n2660_core::types::ST7735_HEIGHT {
+        for x in 0..n2660_core::types::ST7735_WIDTH {
+            if sub_fb[y][x] != 0 {
+                sub_non_zero += 1;
+            }
+        }
+    }
+    println!("GC9307 Non-zero pixels count: {} / 76800. Sample fb[100][100] = 0x{:04X}", non_zero, fb[100][100]);
+    println!("ST7735 Non-zero pixels count: {} / 19200", sub_non_zero);
+    assert!(non_zero > 10_000);
+    assert!(sub_non_zero > 1_000);
 }

@@ -5,6 +5,7 @@ use crate::types::{GC9307_WIDTH, GC9307_HEIGHT, ST7735_WIDTH, ST7735_HEIGHT};
 
 #[derive(Clone)]
 pub struct LcdController<const W: usize, const H: usize> {
+    pub dc_mode: bool,
     pub cmd: u8,
     pub params: Vec<u8>,
     pub col_start: usize,
@@ -26,6 +27,7 @@ impl<const W: usize, const H: usize> Default for LcdController<W, H> {
 impl<const W: usize, const H: usize> LcdController<W, H> {
     pub fn new() -> Self {
         Self {
+            dc_mode: false,
             cmd: 0,
             params: Vec::with_capacity(16),
             col_start: 0,
@@ -101,18 +103,62 @@ impl SprdDisplaySubsystem {
         }
     }
 
+    pub fn read_spi0(&self, offset: u32) -> u32 {
+        match offset {
+            0x0C => 1 << 8, // SPI_STS1: TX FIFO Empty / ready
+            _ => 0,
+        }
+    }
+
     pub fn write_spi0(&mut self, offset: u32, val: u32) {
         match offset {
-            0x00 => self.gc9307.write_cmd((val & 0xFF) as u8),
-            0x04 => self.gc9307.write_data((val & 0xFF) as u8),
+            0x18 => {
+                // SPI_CTL4_REG (D/C select: 0 = Command, 1 = Data)
+                self.gc9307.dc_mode = (val & 0x1) != 0;
+            }
+            0x00 => {
+                // SPI_TXD_REG: Transmit byte based on D/C flag
+                let byte = (val & 0xFF) as u8;
+                if !self.gc9307.dc_mode {
+                    self.gc9307.write_cmd(byte);
+                } else {
+                    self.gc9307.write_data(byte);
+                }
+            }
+            0x04 => {
+                // Dedicated data register fallback
+                self.gc9307.write_data((val & 0xFF) as u8);
+            }
             _ => {}
+        }
+    }
+
+    pub fn read_spi1(&self, offset: u32) -> u32 {
+        match offset {
+            0x0C => 1 << 8, // SPI_STS1: TX FIFO Empty / ready
+            _ => 0,
         }
     }
 
     pub fn write_spi1(&mut self, offset: u32, val: u32) {
         match offset {
-            0x00 => self.st7735.write_cmd((val & 0xFF) as u8),
-            0x04 => self.st7735.write_data((val & 0xFF) as u8),
+            0x18 => {
+                // SPI_CTL4_REG (D/C select: 0 = Command, 1 = Data)
+                self.st7735.dc_mode = (val & 0x1) != 0;
+            }
+            0x00 => {
+                // SPI_TXD_REG: Transmit byte based on D/C flag
+                let byte = (val & 0xFF) as u8;
+                if !self.st7735.dc_mode {
+                    self.st7735.write_cmd(byte);
+                } else {
+                    self.st7735.write_data(byte);
+                }
+            }
+            0x04 => {
+                // Dedicated data register fallback
+                self.st7735.write_data((val & 0xFF) as u8);
+            }
             _ => {}
         }
     }

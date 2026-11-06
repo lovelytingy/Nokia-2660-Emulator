@@ -123,6 +123,8 @@ impl T107Vm {
                         SPRD_KPD_BASE   => (ctx.kpd.read(offset), true),
                         SPRD_SFC_BASE   => (ctx.sfc.read(offset), true),
                         SPRD_AUDIO_BASE => (ctx.audio.read(offset), true),
+                        SPRD_SPI0_BASE  => (ctx.display.read_spi0(offset), true),
+                        SPRD_SPI1_BASE  => (ctx.display.read_spi1(offset), true),
                         _ => (0, false),
                     }
                 };
