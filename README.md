@@ -8,6 +8,9 @@ An open-source hardware emulation and reverse-engineering environment for the **
 
 The goal of this project is to understand and emulate the phone's hardware environment sufficiently to execute and debug firmware components, investigate the original **MOCOR** operating system, and eventually support the development and testing of **OpenFeatureOS**.
 
+> [!IMPORTANT]
+> **Legal Notice & Non-Affiliation**: This project is an independent open-source research effort and is **not affiliated with, sponsored by, or endorsed by Nokia Corporation, HMD Global Oy, or Unisoc Technologies Co., Ltd.** All trademarks belong to their respective owners and are used strictly under nominative fair use to describe hardware compatibility. **No proprietary firmware binaries are distributed in this repository.** For full details, see [DISCLAIMER.md](DISCLAIMER.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ---
 
 ## Target Hardware Specifications
