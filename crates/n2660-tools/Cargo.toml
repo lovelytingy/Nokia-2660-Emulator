@@ -1,0 +1,12 @@
+[package]
+name = "n2660-tools"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hardware utilities and image packagers for Nokia 2660 Flip"
+
+[dependencies]
+n2660-core = { path = "../n2660-core" }
+clap = { workspace = true }
+byteorder = { workspace = true }

@@ -1,8 +1,10 @@
 # Root Makefile for Nokia 2660 Emulator (N2660Emu)
 
 PYTHON ?= python3
+CARGO ?= cargo
+RUST_BIN = target/release/n2660emu-rs
 
-all: firmware bootrom
+all: firmware bootrom rust
 
 firmware:
 	$(MAKE) -C tests/baremetal
@@ -10,11 +12,15 @@ firmware:
 bootrom:
 	$(MAKE) -C roms
 
-test: firmware bootrom
+rust:
+	$(CARGO) build --release
+
+test: firmware bootrom rust
+	$(CARGO) test --workspace -- --nocapture
 	$(PYTHON) -m unittest discover -s tests/unit -v
 
-run: firmware
-	./bin/n2660emu tests/baremetal/test_firmware.bin --engine unicorn
+run: firmware rust
+	./$(RUST_BIN) tests/baremetal/test_firmware.bin
 
 interactive: firmware
 	./bin/n2660emu -i
@@ -37,6 +43,7 @@ disasm: firmware
 clean:
 	$(MAKE) -C tests/baremetal clean
 	$(MAKE) -C roms clean
+	$(CARGO) clean
 	rm -rf build __pycache__ tools/__pycache__ tests/unit/__pycache__ roms/__pycache__
 
-.PHONY: all firmware bootrom test run interactive gui trace screen sub-screen disasm clean
+.PHONY: all firmware bootrom rust test run interactive gui trace screen sub-screen disasm clean

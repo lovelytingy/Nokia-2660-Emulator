@@ -1,0 +1,13 @@
+[package]
+name = "n2660-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core hardware emulation engine for the Nokia 2660 Flip (Unisoc T107 / UMS9117)"
+
+[dependencies]
+unicorn-engine = { workspace = true }
+byteorder = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

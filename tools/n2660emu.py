@@ -18,6 +18,48 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False, flash=None, fdl1=None, fdl1_addr=0x00006200, fdl2=None, fdl2_addr=0x80100000, bsl=False, audio_dump=None, bootrom=False, bootrom_file=None, boot0=None, boot_mode="auto", boot_key="none", atags=False, cmdline=None, atags_addr=0x80000100, board_id=0x9117):
+    # Prefer ultra-fast native Rust emulation engine if compiled
+    rust_bin = os.path.join(PROJECT_ROOT, "target", "release", "n2660emu-rs")
+    if os.path.isfile(rust_bin) and os.access(rust_bin, os.X_OK):
+        cmd = [
+            rust_bin,
+            "--entry", hex(entry_addr),
+            "--timeout", str(timeout),
+            "--flip", flip
+        ]
+        if bin_path:
+            cmd.append(bin_path)
+        if trace:
+            cmd.append("--trace")
+        if flash:
+            cmd.extend(["--flash", flash])
+        if boot0:
+            cmd.extend(["--boot0", boot0])
+        if fdl1:
+            cmd.extend(["--fdl1", fdl1, "--fdl1-addr", hex(fdl1_addr)])
+        if fdl2:
+            cmd.extend(["--fdl2", fdl2, "--fdl2-addr", hex(fdl2_addr)])
+        if bsl:
+            cmd.append("--bsl")
+        if bootrom:
+            cmd.append("--bootrom")
+        if atags:
+            cmd.extend(["--atags", "--atags-addr", hex(atags_addr), "--board-id", hex(board_id)])
+        if cmdline:
+            cmd.extend(["--cmdline", cmdline])
+        if screen_dump:
+            cmd.extend(["--screen-dump", screen_dump])
+        if sub_screen_dump:
+            cmd.extend(["--sub-screen-dump", sub_screen_dump])
+        if keys:
+            for k in keys:
+                cmd.extend(["--key", k])
+
+        target_desc = boot0 if boot0 else (fdl1 if fdl1 else (bin_path or "BootROM"))
+        print(f"[N2660Emu] Launching Rust Core Engine on '{target_desc}'...")
+        res = subprocess.run(cmd)
+        return res.returncode
+
     script_path = os.path.join(PROJECT_ROOT, "tools", "unicorn_runner.py")
     cmd = [
         sys.executable,
