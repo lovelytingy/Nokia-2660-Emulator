@@ -14,6 +14,8 @@ import argparse
 import shutil
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False, flash=None, fdl1=None, fdl1_addr=0x00006200, fdl2=None, fdl2_addr=0x80100000, bsl=False, audio_dump=None, bootrom=False, bootrom_file=None, boot0=None, boot_mode="auto", boot_key="none"):
     script_path = os.path.join(PROJECT_ROOT, "tools", "unicorn_runner.py")
@@ -136,6 +138,7 @@ Examples:
     parser.add_argument("--fdl1-addr", type=lambda x: int(x, 0), default=0x00006200, help="FDL1 load address (default: 0x00006200)")
     parser.add_argument("--fdl2", type=str, default=None, help="Path to FDL2 binary to stage into DRAM (default addr: 0x80100000)")
     parser.add_argument("--fdl2-addr", type=lambda x: int(x, 0), default=0x80100000, help="FDL2 load address (default: 0x80100000)")
+    parser.add_argument("--pac", type=str, default=None, help="Path to Unisoc .PAC firmware container to unpack and run")
     parser.add_argument("--bsl", action="store_true", help="Simulate BootROM BSL handshake over UART0 when loading FDL1")
     parser.add_argument("--bootrom", action="store_true", help="Execute hardware BootROM reset vector at 0x00000000")
     parser.add_argument("--bootrom-file", type=str, default=None, help="Path to custom BootROM binary (default: roms/bootrom.bin)")
@@ -146,14 +149,42 @@ Examples:
 
     args, unknown = parser.parse_known_args()
 
-    if not args.firmware and not args.fdl1 and not args.bootrom and not args.boot0:
-        print("Error: Either firmware, --fdl1, --bootrom, or --boot0 must be specified.")
+    if not args.firmware and not args.fdl1 and not args.bootrom and not args.boot0 and not args.pac:
+        print("Error: Either firmware, --fdl1, --bootrom, --boot0, or --pac must be specified.")
         sys.exit(1)
 
     fw_path = os.path.abspath(args.firmware) if args.firmware else None
     if fw_path and not os.path.isfile(fw_path):
         print(f"Error: Firmware file '{fw_path}' does not exist.")
         sys.exit(1)
+
+    # Automated .PAC extraction and staging
+    pac_file = args.pac or (fw_path if fw_path and fw_path.lower().endswith(".pac") else None)
+    if pac_file:
+        from tools.pac_extractor import PacExtractor
+        print(f"[N2660Emu] Detected Unisoc .PAC firmware container: '{pac_file}'")
+        extractor = PacExtractor(pac_file)
+        extractor.parse()
+        pac_cache_dir = os.path.join(PROJECT_ROOT, "build", "pac_cache", os.path.splitext(os.path.basename(pac_file))[0])
+        extractor.extract_all(pac_cache_dir)
+        for part in extractor.files:
+            pid = part["id"].upper()
+            target_path = os.path.join(pac_cache_dir, part["filename"])
+            if os.path.isfile(target_path):
+                if "FDL1" in pid and not args.fdl1:
+                    args.fdl1 = target_path
+                    if part["load_addr"]:
+                        args.fdl1_addr = part["load_addr"]
+                elif "FDL2" in pid and not args.fdl2:
+                    args.fdl2 = target_path
+                    if part["load_addr"]:
+                        args.fdl2_addr = part["load_addr"]
+                elif ("BOOT0" in pid or "SPL" in pid) and not args.boot0:
+                    args.boot0 = target_path
+        if not args.fdl1 and not args.boot0:
+            fw_path = None
+        elif args.fdl1:
+            fw_path = None
 
     # Determine engine if auto
     engine = args.engine

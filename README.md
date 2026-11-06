@@ -44,6 +44,7 @@ Nokia-2660-Emulator/
 │   ├── BOOT_FLOW.md             # BootROM reset vector, BOOT0 header & multi-stage boot flow
 │   ├── BOOT_PROCESS.md          # Multi-stage boot sequence (BootROM -> FDL1 -> FDL2 -> OS)
 │   ├── BSL_PROTOCOL.md          # Spreadtrum BSL framing, opcodes, CRC16 & FDL staging
+│   ├── FIRMWARE_PACKAGING.md    # Unisoc .PAC container format, partition table & builder
 │   └── PERIPHERALS.md           # SPRD UART, Timers, Keypad, SPI / Display specs
 ├── hw/
 │   ├── arm/
@@ -101,6 +102,7 @@ Nokia-2660-Emulator/
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
 │   └── unit/
 │       ├── test_bootrom.py      # BootROM reset vector, BOOT0 packaging & boot flow tests
+│       ├── test_pac_extractor.py # Unisoc .PAC packaging, extraction & XML tests
 │       ├── test_memory_map.py   # Automated memory map & peripheral tests
 │       └── test_bsl_protocol.py # BSL protocol framing, CRC16, and FDL loader tests
 ├── tools/
@@ -286,16 +288,35 @@ make disasm
 
 ## Reverse Engineering Tools
 
-### Unpacking Official Nokia `.PAC` Firmware
-Extract raw partition images (`fdl1.bin`, `fdl2.bin`, `boot0.bin`, `boot1.bin`, `kernel.bin`) from manufacturer `.pac` containers:
+### Unpacking & Building Official Nokia `.PAC` Firmware
+N2660Emu provides [`tools/pac_extractor.py`](file:///Users/lovelytingy/Documents/Personal-Projects/Nokia-2660-Emulator/tools/pac_extractor.py) to parse, unpack, inspect, and package Spreadtrum `.PAC` firmware archives:
+
 ```bash
-./tools/pac_extractor.py <firmware.pac> -o extracted_fw/
+# 1. List partition records, load addresses, and sizes:
+./tools/pac_extractor.py list <firmware.pac>
+
+# 2. Extract all partition images (FDL1, FDL2, BOOT0, BOOT1, KERNEL, SYSTEM):
+./tools/pac_extractor.py extract <firmware.pac> -o extracted_fw/
+
+# 3. Extract a single partition by ID:
+./tools/pac_extractor.py extract <firmware.pac> --id FDL1 -o extracted_fw/
+
+# 4. Dump flash geometry and partition layout XML:
+./tools/pac_extractor.py dump-xml <firmware.pac>
+
+# 5. Build a custom .PAC firmware archive:
+./tools/pac_extractor.py pack -o custom.pac --name "Nokia 2660 Flip" \
+    -f FDL1:build/fdl1.bin:0x00006200 \
+    -f FDL2:build/fdl2.bin:0x80100000 \
+    -f BOOT0:build/boot0.bin:0x00006200
 ```
 
-To list partition layouts and load addresses without extracting:
+### Direct .PAC Execution in N2660Emu
+You can pass vendor `.PAC` containers directly to the emulator launcher:
 ```bash
-./tools/pac_extractor.py <firmware.pac> -l
+./bin/n2660emu path/to/firmware.pac --bsl
 ```
+The launcher will automatically unpack the container, stage `FDL1` into SRAM (`0x00006200`), stage `FDL2` into DRAM (`0x80100000`), perform the Spreadtrum BSL handshake over UART0, and boot the virtual machine.
 
 ---
 
@@ -313,7 +334,7 @@ To list partition layouts and load addresses without extracting:
 - [x] **Phase 1: CPU and Memory Emulation** (ARM Cortex-A7, SRAM, DRAM, SPRD UART, Baremetal test passed)
 - [x] **Phase 2: T107 Memory Map & Core SoC** (Timers, GPIO, MMIO access logging, down-counter verification)
 - [x] **Phase 3: Nokia Peripherals (Displays, Input, Storage & Audio)** (SPRD SPI0 & SPI1, GC9307 main LCD, ST7735 sub-screen, SPRD KPD matrix, Hall flip sensor, 128 MB SPI NAND & SFC, SPRD Audio DAC & Tone Buzzer)
-- [x] **Phase 4: BootROM, BSL Engine & Multi-Stage Boot Flow** (Reset vector at 0x00000000, download key detection, SPRD BOOT0 header parser, NAND Block 0 staging, BSL HDLC framing & CRC16, FDL1/FDL2 staging)
+- [x] **Phase 4: BootROM, BSL Engine & PAC Firmware Extractor** (Reset vector at 0x00000000, download key detection, SPRD BOOT0 header parser, NAND Block 0 staging, BSL HDLC framing & CRC16, FDL1/FDL2 staging, PAC unpacker & builder)
 - [ ] **Phase 4 (Cont.): MOCOR OS Bringup & Vendor Firmware Execution** (FDL1 DDR init, FDL2 flash ops, BOOT1/LK, MOCOR OS)
 - [ ] **Phase 5: OpenFeatureOS Development** (Custom kernel bringup and verification)
 
