@@ -11,6 +11,9 @@ import sys
 import os
 import argparse
 import collections
+import struct
+import math
+import wave
 
 try:
     from tools.bsl_engine import (
@@ -149,6 +152,23 @@ NAND_CMD_SET_FEATURE   = 0x1F
 JEDEC_MFR_WINBOND      = 0xEF
 JEDEC_DEV_W25N01GV     = 0xAA21
 
+SPRD_AUDIO_BASE        = 0x500C0000
+AUD_CTL                = 0x0000
+AUD_STS                = 0x0004
+AUD_TXD                = 0x0008
+AUD_RXD                = 0x000C
+AUD_INT_EN             = 0x0010
+AUD_INT_RAW            = 0x0014
+AUD_INT_CLR            = 0x0018
+AUD_FIFO_CTL           = 0x001C
+AUD_DAC_CTL            = 0x0020
+AUD_PATH_CTL           = 0x0024
+
+TONE_CTL               = 0x0030
+TONE_FREQ              = 0x0034
+TONE_DUR               = 0x0038
+TONE_VOL               = 0x003C
+
 PL011_UART_BASE = 0x09000000
 
 class T107UnicornVM:
@@ -233,6 +253,20 @@ class T107UnicornVM:
         self.nand_status_reg2 = 0x18
         self.nand_status_reg3 = 0x00
 
+        # SPRD Audio Subsystem & Tone Generator State
+        self.aud_ctl = 0
+        self.aud_int_en = 0
+        self.aud_int_raw = 0
+        self.aud_fifo_ctl = (16 << 8) | (16 << 16)
+        self.aud_dac_ctl = 0x00008001
+        self.aud_path_ctl = 2  # Loudspeaker
+        self.tone_ctl = 0
+        self.tone_freq = 1000
+        self.tone_dur = 50
+        self.tone_vol = 80
+        self.audio_tx_samples = []
+        self.audio_tone_events = []
+
         # Map Memory Regions
         # 1. Internal SRAM
         self.uc.mem_map(SRAM_BASE, SRAM_SIZE)
@@ -249,6 +283,7 @@ class T107UnicornVM:
         self.uc.mem_map(SPRD_SPI0_BASE, 0x1000)
         self.uc.mem_map(SPRD_SPI1_BASE, 0x1000)
         self.uc.mem_map(SPRD_SFC_BASE, 0x1000)
+        self.uc.mem_map(SPRD_AUDIO_BASE, 0x1000)
         self.uc.mem_map(PL011_UART_BASE, 0x1000)
         # Also map page around 0x40001000 to test unmapped traps
         self.uc.mem_map(0x40001000 & ~0xFFF, 0x1000)
@@ -532,7 +567,49 @@ class T107UnicornVM:
                 self.sfc_buf_ptr = (value & 0xFFFFFFFF) % NAND_PAGE_TOTAL_SIZE
             return
 
-        # 8. Catch-all unknown peripheral writes
+        # 8. SPRD Audio Subsystem (0x500C0000)
+        if SPRD_AUDIO_BASE <= address < (SPRD_AUDIO_BASE + 0x1000):
+            offset = address - SPRD_AUDIO_BASE
+            if offset == AUD_CTL:
+                self.aud_ctl = value & 0xFFFFFFFF
+            elif offset == AUD_TXD:
+                sample = value & 0xFFFFFFFF
+                self.audio_tx_samples.append(sample)
+            elif offset == AUD_INT_EN:
+                self.aud_int_en = value & 0xFFFFFFFF
+            elif offset == AUD_INT_CLR:
+                self.aud_int_raw &= ~(value & 0xFFFFFFFF)
+            elif offset == AUD_FIFO_CTL:
+                self.aud_fifo_ctl = value & 0xFFFFFFFF
+                if value & 1:  # Reset TX FIFO
+                    self.audio_tx_samples.clear()
+            elif offset == AUD_DAC_CTL:
+                self.aud_dac_ctl = value & 0xFFFFFFFF
+            elif offset == AUD_PATH_CTL:
+                self.aud_path_ctl = value & 0xFFFFFFFF
+            elif offset == TONE_CTL:
+                self.tone_ctl = value & 0xFFFFFFFF
+                if value & 1:  # TONE_EN
+                    event = {
+                        "freq": self.tone_freq,
+                        "dur": self.tone_dur,
+                        "vol": self.tone_vol,
+                        "cont": bool(value & 2),
+                        "sine": bool(value & 4)
+                    }
+                    self.audio_tone_events.append(event)
+                    print(f"[N2660Emu Audio] Beep Tone: {self.tone_freq} Hz, {self.tone_dur} ms, volume {self.tone_vol}%")
+                    if not (value & 2):  # Self-clear if not continuous
+                        self.tone_ctl &= ~1
+            elif offset == TONE_FREQ:
+                self.tone_freq = value & 0xFFFFFFFF
+            elif offset == TONE_DUR:
+                self.tone_dur = value & 0xFFFFFFFF
+            elif offset == TONE_VOL:
+                self.tone_vol = value & 0xFFFFFFFF
+            return
+
+        # 9. Catch-all unknown peripheral writes
         if 0x40000000 <= address < 0x60000000:
             pc = uc.reg_read(UC_ARM_REG_PC)
             print(f"\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{address:08X} = 0x{value:08X} (size {size}) from PC 0x{pc:08X}")
@@ -657,7 +734,40 @@ class T107UnicornVM:
             uc.mem_write(address, (val & 0xFFFFFFFF).to_bytes(4, 'little'))
             return
 
-        # 4. Catch-all unknown peripheral reads
+        # 8. SPRD Audio Subsystem (0x500C0000)
+        if SPRD_AUDIO_BASE <= address < (SPRD_AUDIO_BASE + 0x1000):
+            offset = address - SPRD_AUDIO_BASE
+            if offset == AUD_CTL:
+                val = self.aud_ctl
+            elif offset == AUD_STS:
+                cnt = min(64, len(self.audio_tx_samples))
+                val = (1 if cnt == 0 else 0) | (2 if cnt >= 64 else 0) | 4 | (cnt << 8)
+            elif offset == AUD_RXD:
+                val = 0
+            elif offset == AUD_INT_EN:
+                val = self.aud_int_en
+            elif offset == AUD_INT_RAW:
+                val = self.aud_int_raw
+            elif offset == AUD_FIFO_CTL:
+                val = self.aud_fifo_ctl
+            elif offset == AUD_DAC_CTL:
+                val = self.aud_dac_ctl
+            elif offset == AUD_PATH_CTL:
+                val = self.aud_path_ctl
+            elif offset == TONE_CTL:
+                val = self.tone_ctl
+            elif offset == TONE_FREQ:
+                val = self.tone_freq
+            elif offset == TONE_DUR:
+                val = self.tone_dur
+            elif offset == TONE_VOL:
+                val = self.tone_vol
+            else:
+                val = 0
+            uc.mem_write(address, (val & 0xFFFFFFFF).to_bytes(4, 'little'))
+            return
+
+        # 9. Catch-all unknown peripheral reads
         if 0x40000000 <= address < 0x60000000:
             pc = uc.reg_read(UC_ARM_REG_PC)
             print(f"\n[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x{address:08X} (size {size}) from PC 0x{pc:08X}")
@@ -829,6 +939,53 @@ class T107UnicornVM:
             print(line)
         print("=" * 60)
 
+    def export_wav(self, file_path):
+        """Exports captured audio PCM samples and buzzer tones as standard 16-bit 44.1 kHz WAV."""
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        sample_rate = 44100
+        raw_samples = bytearray()
+
+        # If PCM samples written to AUD_TXD exist, output them
+        if self.audio_tx_samples:
+            for s in self.audio_tx_samples:
+                left = (s & 0xFFFF)
+                if left >= 0x8000:
+                    left -= 0x10000
+                right = ((s >> 16) & 0xFFFF)
+                if right >= 0x8000:
+                    right -= 0x10000
+                raw_samples.extend(struct.pack("<hh", left, right))
+
+        # If tone events exist, synthesize them into PCM audio
+        if self.audio_tone_events:
+            for ev in self.audio_tone_events:
+                freq = max(20, min(20000, ev.get("freq", 1000)))
+                dur_ms = max(10, min(5000, ev.get("dur", 50)))
+                vol = max(0, min(100, ev.get("vol", 80))) / 100.0
+                amplitude = int(32767 * vol * 0.8)
+                num_samples = int(sample_rate * dur_ms / 1000.0)
+                is_sine = ev.get("sine", False)
+
+                for i in range(num_samples):
+                    t = float(i) / sample_rate
+                    if is_sine:
+                        sample_val = int(amplitude * math.sin(2.0 * math.pi * freq * t))
+                    else:
+                        # Square wave buzzer
+                        period = 1.0 / freq
+                        sample_val = amplitude if (t % period) < (period / 2.0) else -amplitude
+                    raw_samples.extend(struct.pack("<hh", sample_val, sample_val))
+
+        if not raw_samples:
+            raw_samples.extend(b'\x00' * (sample_rate // 10 * 4))
+
+        with wave.open(file_path, "wb") as wf:
+            wf.setnchannels(2)      # Stereo
+            wf.setsampwidth(2)      # 16-bit
+            wf.setframerate(sample_rate)
+            wf.writeframes(raw_samples)
+        print(f"[N2660Emu Audio] Saved audio dump to '{file_path}' ({len(raw_samples)//4} frames, 44.1 kHz stereo)")
+
 def main():
     parser = argparse.ArgumentParser(description="N2660Emu Unicorn VM Runner")
     parser.add_argument("binary", nargs="?", default=None, help="Path to raw binary file to execute")
@@ -849,6 +1006,7 @@ def main():
     parser.add_argument("--fdl2", type=str, default=None, help="Path to FDL2 binary to stage into DRAM (default addr: 0x80100000)")
     parser.add_argument("--fdl2-addr", type=lambda x: int(x, 0), default=0x80100000, help="FDL2 load address (default: 0x80100000)")
     parser.add_argument("--bsl", action="store_true", help="Simulate BootROM BSL handshake over UART0 when loading FDL1")
+    parser.add_argument("--audio-dump", type=str, default=None, help="Path to dump audio output as WAV file")
     args = parser.parse_args()
 
     if not args.binary and not args.fdl1:
@@ -897,6 +1055,9 @@ def main():
 
     if args.preview_sub_screen:
         vm.render_sub_terminal_preview()
+
+    if args.audio_dump:
+        vm.export_wav(args.audio_dump)
 
     sys.exit(0 if success else 1)
 

@@ -48,6 +48,8 @@ Nokia-2660-Emulator/
 │   ├── arm/
 │   │   ├── nokia_2660.c         # QEMU Machine model (TYPE_NOKIA_2660_MACHINE)
 │   │   └── t107_soc.c           # QEMU T107 SoC model (CPU, SRAM, DRAM, MMIO trap)
+│   ├── audio/
+│   │   └── sprd_audio.c         # Unisoc SPRD Audio Subsystem, DAC & Tone Buzzer model
 │   ├── block/
 │   │   └── sprd_sfc.c           # Unisoc SPRD Serial Flash Controller & 128 MB SPI NAND
 │   ├── char/
@@ -66,6 +68,7 @@ Nokia-2660-Emulator/
 ├── include/
 │   └── hw/
 │       ├── arm/t107.h           # SoC and machine state headers
+│       ├── audio/sprd_audio.h   # SPRD Audio & Buzzer Tone Generator register defines
 │       ├── block/sprd_sfc.h     # SFC registers and SPI NAND geometry
 │       ├── char/sprd_uart.h     # SPRD UART register defines and state
 │       ├── display/
@@ -77,13 +80,14 @@ Nokia-2660-Emulator/
 │       └── timer/sprd_timer.h   # SPRD System Timer registers
 ├── tests/
 │   ├── baremetal/               # ARM Cortex-A7 baremetal verification firmware
-│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, Displays, KPD, Flash, BSL tests
+│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, Displays, KPD, Flash, BSL, Audio
 │   │   ├── startup.s            # Vector table, stack setup, VFP/NEON enable
 │   │   ├── sprd_uart.c          # Baremetal UART driver
 │   │   ├── gc9307.c             # Baremetal GC9307 LCD driver & test pattern
 │   │   ├── st7735.c             # Baremetal ST7735 outer sub-display driver
 │   │   ├── sfc.c                # Baremetal SPI NAND / SFC flash driver
 │   │   ├── bsl.c                # Baremetal BSL HDLC & CRC16 protocol driver
+│   │   ├── audio.c              # Baremetal Audio DAC, PCM streaming & tone buzzer driver
 │   │   ├── kpd.c                # Baremetal Keypad and Hall flip sensor driver
 │   │   ├── linker.ld            # Linker script targeting T107 memory map
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
@@ -171,14 +175,19 @@ Output:
 [TEST] Testing Spreadtrum BSL Protocol Engine & FDL Staging...
 [BSL] CRC16 test vector: 0x0000EBB5
 [PASS] Spreadtrum BSL protocol framing, CRC16 & FDL1 loading verified.
+[TEST] Testing SPRD Audio Subsystem & Buzzer Tone Generator at 0x500C0000...
+[AUDIO] Status STS: 0x00001004 (TX FIFO Samples: 16)
+[N2660Emu Audio] Beep Tone: 1000 Hz, 50 ms, volume 85%
+[BUZZER] Triggered 1000 Hz key click tone (50 ms, vol 85%)
+[PASS] SPRD Audio DAC, PCM FIFO streaming & tone buzzer verified.
 [TEST] Triggering MMIO read at unmapped address 0x40001000...
 
-[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x800008D4
+[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x80000808
 [INFO] Unmapped MMIO read returned: 0x00000000
 
 --------------------------------------------------------
-[RESULT] *** ALL PHASE 1, 2, 3, AND 4 (BSL & FDL) CHECKS PASSED ***
-[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC & BSL OK!
+[RESULT] *** ALL PHASE 1, 2, 3 (DUAL DISPLAY, INPUT, STORAGE & AUDIO) CHECKS PASSED ***
+[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL & Audio OK!
 --------------------------------------------------------
 ```
 
@@ -208,13 +217,19 @@ Load first-stage bootloader `fdl1.bin` into SRAM (`0x00006200`) and optionally s
 ./bin/n2660emu --fdl1 extracted_fw/fdl1.bin --fdl2 extracted_fw/fdl2.bin --bsl
 ```
 
-### 6. Run with Instruction Tracing
+### 6. Capture Audio and Buzzer Tones to WAV
+Capture PCM audio playback and hardware buzzer tone generation to a standard 16-bit 44.1 kHz stereo WAV file:
+```bash
+./bin/n2660emu tests/baremetal/test_firmware.bin --audio-dump audio_capture.wav
+```
+
+### 7. Run with Instruction Tracing
 Trace CPU instructions as they execute in real time:
 ```bash
 make trace
 ```
 
-### 7. Render Primary and Secondary Sub-Displays
+### 8. Render Primary and Secondary Sub-Displays
 Render test graphics and dump high-resolution framebuffer PPM images:
 ```bash
 # Render and dump 240x320 main display:
@@ -224,12 +239,12 @@ make screen
 make sub-screen
 ```
 
-### 8. Run Automated Unit Tests
+### 9. Run Automated Unit Tests
 ```bash
 make test
 ```
 
-### 9. Disassemble Binary with Unisoc T107 Annotations
+### 10. Disassemble Binary with Unisoc T107 Annotations
 ```bash
 make disasm
 ```
@@ -264,9 +279,8 @@ To list partition layouts and load addresses without extracting:
 
 - [x] **Phase 1: CPU and Memory Emulation** (ARM Cortex-A7, SRAM, DRAM, SPRD UART, Baremetal test passed)
 - [x] **Phase 2: T107 Memory Map & Core SoC** (Timers, GPIO, MMIO access logging, down-counter verification)
-- [x] **Phase 3: Nokia Peripherals (Displays, Input & Storage)** (SPRD SPI0 & SPI1, GC9307 main LCD, ST7735 sub-screen, SPRD KPD matrix, Hall flip sensor, 128 MB SPI NAND & SFC)
+- [x] **Phase 3: Nokia Peripherals (Displays, Input, Storage & Audio)** (SPRD SPI0 & SPI1, GC9307 main LCD, ST7735 sub-screen, SPRD KPD matrix, Hall flip sensor, 128 MB SPI NAND & SFC, SPRD Audio DAC & Tone Buzzer)
 - [x] **Phase 4: Spreadtrum BSL Protocol Engine & FDL Loader** (HDLC framing, CRC16, BootROM BSL handshake simulation, FDL1 SRAM / FDL2 DRAM staging)
-- [ ] **Phase 3 (Cont.): Audio Subsystem** (SPRD Audio DAC, I2S, loudspeaker & buzzer interface)
 - [ ] **Phase 4 (Cont.): MOCOR OS Bringup** (FDL1 DDR init, FDL2 flash ops, BOOT0/BOOT1, MOCOR OS)
 - [ ] **Phase 5: OpenFeatureOS Development** (Custom kernel bringup and verification)
 

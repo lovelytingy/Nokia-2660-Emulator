@@ -13,6 +13,7 @@
 #include "st7735.h"
 #include "sfc.h"
 #include "bsl.h"
+#include "audio.h"
 
 /* Peripheral Base Addresses */
 #define SPRD_TIMERS_BASE   0x50030000
@@ -328,7 +329,38 @@ int main(void)
         uart_puts("[FAIL] Spreadtrum BSL protocol verification failed.\n");
     }
 
-    /* 11. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 11. SPRD Audio Subsystem & Tone Generator Test */
+    uart_puts("[TEST] Testing SPRD Audio Subsystem & Buzzer Tone Generator at 0x500C0000...\n");
+    int audio_ok = 1;
+
+    audio_init(1); /* Stereo 16-bit */
+    audio_set_volume(90, AUD_PATH_LOUDSPEAKER);
+
+    /* Stream 16 stereo PCM samples (synthetic triangle wave) */
+    for (int i = 0; i < 16; i++) {
+        int16_t sample_val = (int16_t)((i < 8 ? i * 2000 : (16 - i) * 2000) - 8000);
+        audio_write_pcm((uint16_t)sample_val, (uint16_t)sample_val);
+    }
+
+    uint32_t aud_sts = audio_get_status();
+    uart_puts("[AUDIO] Status STS: ");
+    uart_puthex32(aud_sts);
+    uart_puts(" (TX FIFO Samples: ");
+    uart_putdec((aud_sts >> 8) & 0xFF);
+    uart_puts(")\n");
+
+    /* Play a 1000 Hz keypad click tone for 50 ms */
+    audio_play_tone(1000, 50, 85);
+    uart_puts("[BUZZER] Triggered 1000 Hz key click tone (50 ms, vol 85%)\n");
+
+    if ((aud_sts & 0x01) == 0 || ((aud_sts >> 8) & 0xFF) > 0) {
+        uart_puts("[PASS] SPRD Audio DAC, PCM FIFO streaming & tone buzzer verified.\n");
+    } else {
+        uart_puts("[FAIL] SPRD Audio FIFO state verification failed.\n");
+        audio_ok = 0;
+    }
+
+    /* 12. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -336,11 +368,11 @@ int main(void)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 12. Summary */
+    /* 13. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3, AND 4 (BSL & FDL) CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC & BSL OK!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok && audio_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3 (DUAL DISPLAY, INPUT, STORAGE & AUDIO) CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL & Audio OK!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }

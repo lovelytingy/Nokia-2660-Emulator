@@ -67,6 +67,7 @@ static void t107_soc_init(Object *obj)
     object_initialize_child(obj, "spi1", &s->spi1, TYPE_SPRD_SPI);
     object_initialize_child(obj, "sub_lcd", &s->sub_lcd, TYPE_ST7735);
     object_initialize_child(obj, "sfc", &s->sfc, TYPE_SPRD_SFC);
+    object_initialize_child(obj, "audio", &s->audio, TYPE_SPRD_AUDIO);
 }
 
 static void t107_soc_realize(DeviceState *dev, Error **errp)
@@ -165,6 +166,14 @@ static void t107_soc_realize(DeviceState *dev, Error **errp)
                                         sysbus_mmio_get_region(sfc_sbd, 0), 1);
     memory_region_add_subregion_overlap(sysmem, T107_FLASH_BASE,
                                         sysbus_mmio_get_region(sfc_sbd, 1), 1);
+
+    /* 11. SPRD Audio Subsystem & Tone Generator (0x500C0000) */
+    SysBusDevice *audio_sbd = SYS_BUS_DEVICE(&s->audio);
+    if (!sysbus_realize(audio_sbd, errp)) {
+        return;
+    }
+    memory_region_add_subregion_overlap(sysmem, T107_AUDIO_BASE,
+                                        sysbus_mmio_get_region(audio_sbd, 0), 1);
 }
 
 static Property t107_soc_properties[] = {

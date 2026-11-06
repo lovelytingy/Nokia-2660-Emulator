@@ -15,7 +15,7 @@ import shutil
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False, flash=None, fdl1=None, fdl1_addr=0x00006200, fdl2=None, fdl2_addr=0x80100000, bsl=False):
+def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False, flash=None, fdl1=None, fdl1_addr=0x00006200, fdl2=None, fdl2_addr=0x80100000, bsl=False, audio_dump=None):
     script_path = os.path.join(PROJECT_ROOT, "tools", "unicorn_runner.py")
     cmd = [
         sys.executable,
@@ -36,6 +36,8 @@ def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dum
         cmd.extend(["--fdl2", fdl2, "--fdl2-addr", hex(fdl2_addr)])
     if bsl:
         cmd.append("--bsl")
+    if audio_dump:
+        cmd.extend(["--audio-dump", audio_dump])
     if screen_dump:
         cmd.extend(["--screen-dump", screen_dump])
     if sub_screen_dump:
@@ -127,6 +129,7 @@ Examples:
     parser.add_argument("--fdl2", type=str, default=None, help="Path to FDL2 binary to stage into DRAM (default addr: 0x80100000)")
     parser.add_argument("--fdl2-addr", type=lambda x: int(x, 0), default=0x80100000, help="FDL2 load address (default: 0x80100000)")
     parser.add_argument("--bsl", action="store_true", help="Simulate BootROM BSL handshake over UART0 when loading FDL1")
+    parser.add_argument("--audio-dump", type=str, default=None, help="Path to dump audio output as WAV file")
 
     args, unknown = parser.parse_known_args()
 
@@ -153,7 +156,8 @@ Examples:
                                  keys=args.key, flip=args.flip,
                                  sub_screen_dump=args.sub_screen_dump, preview_sub_screen=args.preview_sub_screen,
                                  flash=args.flash, fdl1=args.fdl1, fdl1_addr=args.fdl1_addr,
-                                 fdl2=args.fdl2, fdl2_addr=args.fdl2_addr, bsl=args.bsl)
+                                 fdl2=args.fdl2, fdl2_addr=args.fdl2_addr, bsl=args.bsl,
+                                 audio_dump=args.audio_dump)
     else:
         machine = "virt" if engine == "qemu-virt" else "nokia-2660"
         ret = run_qemu_system(fw_path, machine=machine, gdb=args.gdb, wait_gdb=args.wait_gdb, extra_args=unknown)

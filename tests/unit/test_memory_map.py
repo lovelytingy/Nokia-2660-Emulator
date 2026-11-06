@@ -31,6 +31,8 @@ from tools.unicorn_runner import (
     SPRD_SPI0_BASE, GC9307_WIDTH, GC9307_HEIGHT,
     SPRD_SPI1_BASE, ST7735_WIDTH, ST7735_HEIGHT,
     SPRD_SFC_BASE, FLASH_DIRECT_BASE, FLASH_TOTAL_SIZE, NAND_PAGE_SIZE, NAND_BLOCK_SIZE,
+    SPRD_AUDIO_BASE, AUD_CTL, AUD_STS, AUD_TXD, AUD_DAC_CTL, AUD_PATH_CTL,
+    TONE_CTL, TONE_FREQ, TONE_DUR, TONE_VOL,
     T107UnicornVM
 )
 
@@ -161,6 +163,28 @@ class TestN2660EmuMemoryMap(unittest.TestCase):
                 (vm.flash_storage[flash_offset + 2] << 16) |
                 (vm.flash_storage[flash_offset + 3] << 24))
         self.assertEqual(val0, 0xAA000000)
+
+    def test_sprd_audio_subsystem(self):
+        self.assertEqual(SPRD_AUDIO_BASE, 0x500C0000)
+        self.assertEqual(AUD_CTL, 0x0000)
+        self.assertEqual(AUD_STS, 0x0004)
+        self.assertEqual(AUD_TXD, 0x0008)
+        self.assertEqual(TONE_CTL, 0x0030)
+
+        bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")
+        vm = T107UnicornVM(trace_instructions=False)
+        vm.load_binary(bin_path, DRAM_BASE)
+        success = vm.run(entry_point=DRAM_BASE, timeout_sec=5)
+        self.assertTrue(success)
+
+        # Verify that 16 PCM stereo samples were captured
+        self.assertGreaterEqual(len(vm.audio_tx_samples), 16)
+        # Verify that the 1000 Hz buzzer tone event was recorded
+        self.assertGreaterEqual(len(vm.audio_tone_events), 1)
+        tone = vm.audio_tone_events[0]
+        self.assertEqual(tone["freq"], 1000)
+        self.assertEqual(tone["dur"], 50)
+        self.assertEqual(tone["vol"], 85)
 
     def test_baremetal_payload_execution(self):
         bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")

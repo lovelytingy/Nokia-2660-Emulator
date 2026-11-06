@@ -190,4 +190,34 @@ The Nokia 2660 Flip TA-1480 utilizes a 128 MB (1 Gb) high-speed SPI NAND flash (
 | `0x0F` | `NAND_CMD_GET_FEATURE` | Reads Status Registers (Protection, Configuration, Status) |
 | `0x1F` | `NAND_CMD_SET_FEATURE` | Writes Status Registers |
 
+---
+
+## 7. SPRD Audio Subsystem & Tone Generator
+
+- **Base Address**: `0x500C0000`
+- **Architecture**: Integrated stereo DAC, 64-word PCM FIFO, hardware volume control, output routing matrix, and hardware tone/buzzer frequency synthesizer.
+- **Audio Output Paths**:
+  - `1`: Earpiece Receiver
+  - `2`: Loudspeaker / Handsfree
+  - `3`: 3.5 mm Stereo Headphone Jack
+
+### Register Map
+| Offset | Register Name | Description | Access | Reset |
+| :--- | :--- | :--- | :--- | :--- |
+| `+0x0000` | `AUD_CTL` | Audio Control (Bit 0: Enable, Bit 1: TX Enable, Bit 8: Stereo, Bit 10: 16/24-bit) | R/W | `0x00000000` |
+| `+0x0004` | `AUD_STS` | Status (Bit 0: TX Empty, Bit 1: TX Full, Bits 8–15: TX FIFO Count) | R | `0x00000005` |
+| `+0x0008` | `AUD_TXD` | Audio TX PCM FIFO Data Register (Write 16/32-bit audio sample) | W | `0x00000000` |
+| `+0x000C` | `AUD_RXD` | Audio RX PCM FIFO Data Register (Read microphone sample) | R | `0x00000000` |
+| `+0x0010` | `AUD_INT_EN` | Interrupt Enable Register | R/W | `0x00000000` |
+| `+0x0014` | `AUD_INT_RAW` | Raw Interrupt Status Register | R | `0x00000000` |
+| `+0x0018` | `AUD_INT_CLR` | Interrupt Clear Register | W | `0x00000000` |
+| `+0x001C` | `AUD_FIFO_CTL`| FIFO Control & Watermark (Bit 0: Reset TX FIFO, Bits 8–15: Threshold) | R/W | `0x00101000` |
+| `+0x0020` | `AUD_DAC_CTL` | DAC Power & Volume Control (Bit 0: DAC Enable, Bits 8–15: Master Volume) | R/W | `0x00008001` |
+| `+0x0024` | `AUD_PATH_CTL`| Audio Output Path Selector (1=Earpiece, 2=Speaker, 3=Headphone) | R/W | `0x00000002` |
+| `+0x0030` | `TONE_CTL` | Tone Generator Control (Bit 0: Enable, Bit 1: Continuous, Bit 2: Sine/Square) | R/W | `0x00000000` |
+| `+0x0034` | `TONE_FREQ` | Tone Frequency in Hz (e.g. 1000 for 1000 Hz key click, 440 for A4) | R/W | `0x000003E8` |
+| `+0x0038` | `TONE_DUR` | Tone Duration in milliseconds (e.g. 50 ms for short click) | R/W | `0x00000032` |
+| `+0x003C` | `TONE_VOL` | Tone Volume / Amplitude (0–100%) | R/W | `0x00000050` |
+
+
 

@@ -20,6 +20,7 @@ The following table summarizes the verified physical memory addresses and device
 | `0x50080000 - 0x50080FFF` | 4 KB | SPRD SPI0 (GC9307 LCD) | High-speed SPI to primary 2.8" QVGA (240x320) display panel. | Verified |
 | `0x50090000 - 0x50090FFF` | 4 KB | SPRD SPI1 (ST7735 LCD) | SPI interface to secondary 1.77" QQVGA (120x160) outer screen. | Verified |
 | `0x500A0000 - 0x500A0FFF` | 4 KB | SPRD SFC (Flash Controller)| Serial Flash Controller interface to 128 MB SPI NAND flash. | Verified |
+| `0x500C0000 - 0x500C0FFF` | 4 KB | SPRD Audio Subsystem | Audio DAC, PCM FIFO streaming, speaker/headphone routing & buzzer tone generator. | Verified |
 | `0x60000000 - 0x67FFFFFF` | 128 MB | Direct Flash Window | High-speed direct memory read window (XIP) into SPI NAND. | Verified |
 | `0x70000000 - 0x7FFFFFFF` | 256 MB | System Bus Matrix / Crypto | Security engine, DMA controller, fast bus arbitration. | Documented |
 | `0x80000000 - 0x82FFFFFF` | 48 MB | System DRAM (LPDDR2) | Main physical RAM (Nokia 2660 configuration). `FDL2` loaded at `0x80100000`. Kernel loaded at `0x80000000+`. | Verified (`spd_dump` dumps & vendor specs) |

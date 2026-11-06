@@ -19,6 +19,7 @@
 #include "hw/display/st7735.h"
 #include "hw/input/sprd_kpd.h"
 #include "hw/block/sprd_sfc.h"
+#include "hw/audio/sprd_audio.h"
 #include "hw/boards.h"
 
 #define TYPE_T107_SOC "t107-soc"
@@ -46,6 +47,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Nokia2660MachineState, NOKIA_2660_MACHINE)
 #define T107_SPI0_BASE            0x50080000        /* GC9307 Display interface */
 #define T107_SPI1_BASE            0x50090000        /* ST7735 Sub-Display interface */
 #define T107_SFC_BASE             0x500A0000        /* Serial Flash Controller (SPI NAND) */
+#define T107_AUDIO_BASE           0x500C0000        /* SPRD Audio Subsystem / Codec & Buzzer */
 #define T107_FLASH_BASE           0x60000000        /* Direct Flash Read Window (128 MB) */
 
 /* Boot & FDL Loader Staging Addresses */
@@ -75,6 +77,7 @@ struct T107SocState {
     SprdSPIState spi1;
     ST7735State sub_lcd;
     SprdSfcState sfc;
+    SprdAudioState audio;
 };
 
 struct Nokia2660MachineState {
