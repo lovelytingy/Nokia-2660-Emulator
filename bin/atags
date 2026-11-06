@@ -1,0 +1,12 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# N2660Emu: ARM Boot Tags (ATAGS) Generator CLI
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BIN="$PROJECT_ROOT/target/release/atags"
+
+if [ ! -f "$BIN" ]; then
+    cargo build --release --manifest-path "$PROJECT_ROOT/Cargo.toml" --bin atags >/dev/null || exit 1
+fi
+
+exec "$BIN" "$@"

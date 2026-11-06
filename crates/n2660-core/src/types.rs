@@ -21,14 +21,21 @@ pub const TRAP_SIZE: usize = 0x0001_0000; // 64 KB
 
 // Peripheral MMIO Offsets
 pub const SPRD_UART0_BASE: u32 = 0x5000_0000;
+pub const SPRD_UART1_BASE: u32 = 0x5001_0000;
+pub const SPRD_UART2_BASE: u32 = 0x5002_0000;
 pub const SPRD_TIMER_BASE: u32 = 0x5003_0000;
 pub const SPRD_GPIO_BASE: u32  = 0x5004_0000;
 pub const SPRD_INTC_BASE: u32  = 0x5005_0000;
 pub const SPRD_KPD_BASE: u32   = 0x5006_0000;
+pub const SPRD_EIC_BASE: u32   = 0x5007_0000;
 pub const SPRD_SPI0_BASE: u32  = 0x5008_0000;
 pub const SPRD_SPI1_BASE: u32  = 0x5009_0000;
 pub const SPRD_SFC_BASE: u32   = 0x500A_0000;
+pub const SPRD_I2C_BASE: u32   = 0x500B_0000;
 pub const SPRD_AUDIO_BASE: u32 = 0x500C_0000;
+pub const SPRD_ADI_BASE: u32   = 0x500D_0000;
+pub const SPRD_CLK_BASE: u32   = 0x500E_0000;
+pub const SPRD_PIN_BASE: u32   = 0x500F_0000;
 
 // Displays
 pub const GC9307_WIDTH: usize = 240;

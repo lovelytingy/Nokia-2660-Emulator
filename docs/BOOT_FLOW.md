@@ -133,23 +133,23 @@ typedef struct __attribute__((packed)) {
 
 ---
 
-## 5. Tooling: `tools/mksprd_img.py`
+## 5. Tooling: `bin/mksprd_img`
 
-The emulator provides `tools/mksprd_img.py` to create, inspect, and inject BOOT0 images:
+The emulator provides `bin/mksprd_img` to create, inspect, and inject BOOT0 images:
 
 ### Packaging a Payload into BOOT0:
 ```bash
-python3 tools/mksprd_img.py create -i payload.bin -o boot0.bin --load-addr 0x00006200 --entry 0x00006200
+./bin/mksprd_img create -i payload.bin -o boot0.bin --load-addr 0x00006200 --entry 0x00006200
 ```
 
 ### Inspecting an Existing Image:
 ```bash
-python3 tools/mksprd_img.py verify boot0.bin
+./bin/mksprd_img verify boot0.bin
 ```
 
 ### Injecting into an SPI NAND Image:
 ```bash
-python3 tools/mksprd_img.py inject -b boot0.bin -f nand_flash.bin --block 0
+./bin/mksprd_img inject -b boot0.bin -f nand_flash.bin --block 0
 ```
 
 ---
@@ -158,16 +158,16 @@ python3 tools/mksprd_img.py inject -b boot0.bin -f nand_flash.bin --block 0
 
 ### Cold Boot from SPI NAND Flash Block 0:
 ```bash
-python3 tools/n2660emu.py --boot0 boot0.bin
+./bin/n2660emu --boot0 boot0.bin --gui
 ```
 
-### Forcing BSL Download Mode with `*` Key:
+### Forcing BSL Download Mode with FDL1:
 ```bash
-python3 tools/n2660emu.py --bootrom --boot-key star --fdl1 fdl1.bin
+./bin/n2660emu --bootrom --fdl1 fdl1.bin --bsl
 ```
 
 ### Simulating Blank / Corrupted Flash Fallback:
 ```bash
-python3 tools/n2660emu.py --bootrom
+./bin/n2660emu --bootrom
 ```
 In this mode, the BootROM probes Block 0, observes blank NAND (`0xFFFFFFFF`), prints a warning, and falls back to BSL recovery mode.

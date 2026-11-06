@@ -62,10 +62,10 @@ The **N2660Emu** project is an open-source hardware emulation and reverse-engine
 3. **UART Peripheral (`hw/char/sprd_uart.c`)**:
    - Emulates the Unisoc/Spreadtrum UART IP block as documented in the Linux kernel (`sprd_serial.c`).
    - Implements FIFO status (`SPRD_STS1`), TX register (`SPRD_TXD`), RX register (`SPRD_RXD`), and clock divider registers.
-4. **Firmware Analysis Tools (`tools/`)**:
-   - `pac_extractor.py`: Parses and extracts partitions from official Spreadtrum `.pac` firmware files.
-   - `disasm.py`: Capstone-powered disassembler with Unisoc register symbol annotations.
-   - `unicorn_engine.py`: Fast Python/Unicorn runner for isolated binary execution, memory inspection, and unit testing.
+4. **Firmware Analysis Tools & Rust Engine (`crates/` & `bin/`)**:
+   - `bin/pac_extractor`: Parses, lists, extracts, and creates Spreadtrum `.pac` firmware files in native Rust.
+   - `bin/disasm`: Capstone-powered Cortex-A7 disassembler with Unisoc register symbol annotations in native Rust.
+   - `bin/n2660emu`: High-performance ARM Cortex-A7 virtual machine and native host GUI with live serial console, hardware telemetry deck, and interactive keypad.
 
 ---
 
@@ -73,25 +73,27 @@ The **N2660Emu** project is an open-source hardware emulation and reverse-engine
 
 - [x] **Phase 1: CPU and Memory Emulation**
   - CPU architecture defined (Cortex-A7, ARMv7-A).
-  - Minimal custom machine model created.
+  - High-performance ARM Unicorn VM engine in Rust.
   - Memory regions (IRAM at `0x00000000`, DRAM at `0x80000000`) mapped.
   - Baremetal ARM test suite created and verified.
   - Virtual UART character output verified.
-- [ ] **Phase 2: T107 SoC Peripherals & MMIO**
-  - SPRD interrupt controller (VIC / GIC).
+- [x] **Phase 2: T107 SoC Peripherals & MMIO**
+  - SPRD interrupt controller (INTC 32 channels).
   - SPRD system timers and clock control.
-  - GPIO and pinmux registers.
-  - Unknown MMIO logging mechanism.
-- [ ] **Phase 3: Nokia Peripherals**
-  - SPI controller & GC9307 display driver.
-  - Keypad controller & flip sensor.
-  - USB device controller (BSL protocol).
-  - SPI NAND flash emulation.
-- [ ] **Phase 4: Firmware Execution**
-  - FDL1 execution and memory init verification.
-  - FDL2 protocol handling.
-  - BOOT0/BOOT1 loading.
-  - MOCOR OS startup tracing.
+  - GPIO and flip hall effect sensor.
+  - Unknown MMIO logging mechanism with address trap throttling.
+- [x] **Phase 3: Nokia Peripherals**
+  - Dual SPI LCD controllers (GC9307 240x320 main and ST7735 120x160 outer).
+  - Keypad controller (KPD matrix scanner + interrupt for 21 physical buttons).
+  - BSL protocol engine (HDLC 0x7E framing + CRC16-CCITT).
+  - SPI NAND flash emulation (Winbond W25N01GV 128 MB).
+  - Audio DAC & PCM tone buzzer generator.
+- [x] **Phase 4: Firmware Execution**
+  - Automated .PAC vendor firmware container ingestion.
+  - FDL1 SRAM staging and memory init verification.
+  - FDL2 DRAM staging and SPI NAND flash mounting.
+  - BOOT0/SPL loader with 32-byte SPRD/BIMG header validation.
+  - ARM Boot Tags (ATAGS) generation & kernel handoff.
 - [ ] **Phase 5: OpenFeatureOS Development**
   - Custom kernel booting.
   - Driver development and hardware validation.

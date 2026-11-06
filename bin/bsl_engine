@@ -1,0 +1,12 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# N2660Emu: Unisoc Boot Serial Protocol (BSL) Engine CLI
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BIN="$PROJECT_ROOT/target/release/bsl_engine"
+
+if [ ! -f "$BIN" ]; then
+    cargo build --release --manifest-path "$PROJECT_ROOT/Cargo.toml" --bin bsl_engine >/dev/null || exit 1
+fi
+
+exec "$BIN" "$@"

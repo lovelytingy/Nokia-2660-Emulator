@@ -53,17 +53,20 @@ Modern Unisoc chipsets use standard CCITT-16 CRC:
 * **Polynomial**: $x^{16} + x^{12} + x^5 + 1$ (`0x1021`)
 * **Initial Value**: `0x0000`
 
-```python
-def spd_crc16(crc: int, data: bytes) -> int:
-    crc &= 0xFFFF
-    for b in data:
-        crc ^= (b << 8)
-        for _ in range(8):
-            if crc & 0x8000:
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-            else:
-                crc = (crc << 1) & 0xFFFF
-    return crc
+```rust
+pub fn crc16_ccitt(mut crc: u16, data: &[u8]) -> u16 {
+    for &b in data {
+        crc ^= (b as u16) << 8;
+        for _ in 0..8 {
+            if (crc & 0x8000) != 0 {
+                crc = (crc << 1) ^ 0x1021;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    crc
+}
 ```
 
 ---
@@ -170,16 +173,13 @@ Override default memory entry points if using custom SPL or test kernels:
 ./bin/n2660emu --fdl1 payload.bin --fdl1-addr 0x00001000 --bsl
 ```
 
-### 5. Python API (`tools.bsl_engine`)
-```python
-from tools.bsl_engine import BslClient, BslServer, decode_packet, encode_packet
+### 5. Rust API (`n2660_core::bsl`) & CLI (`bin/bsl_engine`)
+```rust
+use n2660_core::bsl::{build_bsl_packet, parse_bsl_packet, crc16_ccitt, hdlc_stuff, hdlc_unstuff, BslPacket};
 
-# Create client and build file upload stream
-client = BslClient(use_crc16=True)
-packets = client.build_file_transfer_stream(fdl1_bytes, target_addr=0x00006200, chunk_size=1024)
+// Encode a BSL command packet with HDLC framing and CRC-16
+let pkt = build_bsl_packet(0x00, &payload); // 0x00 = BSL_CMD_CONNECT
 
-# Feed packets into BSL Server or UART FIFO
-server = BslServer(write_mem_fn=my_mem_writer)
-for pkt in packets:
-    responses = server.process_incoming(pkt)
+// CLI Tool:
+// ./bin/bsl_engine --help
 ```

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! T107 Virtual Machine powered by Unicorn ARM Cortex-A7 engine
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
 use unicorn_engine::{
@@ -11,6 +12,8 @@ use unicorn_engine::{
 use crate::types::*;
 use crate::peripherals::*;
 use crate::atags::AtagsBuilder;
+use crate::bootrom::SprdHeader;
+use crate::pac::PacArchive;
 
 pub struct VmContext {
     pub uart: SprdUart,
@@ -21,6 +24,8 @@ pub struct VmContext {
     pub display: SprdDisplaySubsystem,
     pub sfc: SprdSfc,
     pub audio: SprdAudio,
+    pub misc: SprdMisc,
+    pub logged_traps: HashSet<u32>,
     pub instruction_count: u64,
     pub trace: bool,
     pub timer_start_insn: u64,
@@ -42,6 +47,8 @@ impl T107Vm {
             display: SprdDisplaySubsystem::new(),
             sfc: SprdSfc::new(),
             audio: SprdAudio::new(),
+            misc: SprdMisc::new(),
+            logged_traps: HashSet::new(),
             instruction_count: 0,
             trace,
             timer_start_insn: 0,
@@ -125,6 +132,9 @@ impl T107Vm {
                         SPRD_AUDIO_BASE => (ctx.audio.read(offset), true),
                         SPRD_SPI0_BASE  => (ctx.display.read_spi0(offset), true),
                         SPRD_SPI1_BASE  => (ctx.display.read_spi1(offset), true),
+                        SPRD_ADI_BASE | SPRD_CLK_BASE | SPRD_PIN_BASE | SPRD_EIC_BASE | SPRD_I2C_BASE | SPRD_UART1_BASE | SPRD_UART2_BASE => {
+                            (ctx.misc.read(base, offset), true)
+                        }
                         _ => (0, false),
                     }
                 };
@@ -135,8 +145,11 @@ impl T107Vm {
                     let _ = uc.mem_write(addr, slice);
                 } else {
                     let pc = uc.reg_read(RegisterARM::PC).unwrap_or(0);
-                    println!("\n[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x{:08X} (size {}) from PC 0x{:08X}", addr, size, pc);
-                    println!("[INFO] Unmapped MMIO read returned: 0x00000000\n");
+                    let is_new = uc.get_data_mut().logged_traps.insert(addr as u32);
+                    if is_new {
+                        println!("\n[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x{:08X} (size {}) from PC 0x{:08X}", addr, size, pc);
+                        println!("[INFO] Unmapped MMIO read returned: 0x00000000\n");
+                    }
                     let _ = uc.mem_write(addr, &vec![0u8; size]);
                 }
                 true
@@ -196,6 +209,10 @@ impl T107Vm {
                             ctx.audio.write(offset, val);
                             true
                         }
+                        SPRD_ADI_BASE | SPRD_CLK_BASE | SPRD_PIN_BASE | SPRD_EIC_BASE | SPRD_I2C_BASE | SPRD_UART1_BASE | SPRD_UART2_BASE => {
+                            ctx.misc.write(base, offset, val);
+                            true
+                        }
                         _ => false,
                     }
                 };
@@ -206,7 +223,10 @@ impl T107Vm {
 
                 if !known {
                     let pc = uc.reg_read(RegisterARM::PC).unwrap_or(0);
-                    println!("\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{:08X} (val 0x{:08X}, size {}) from PC 0x{:08X}\n", addr, val, size, pc);
+                    let is_new = uc.get_data_mut().logged_traps.insert(addr as u32);
+                    if is_new {
+                        println!("\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{:08X} (val 0x{:08X}, size {}) from PC 0x{:08X}\n", addr, val, size, pc);
+                    }
                 }
                 true
             },
@@ -219,12 +239,17 @@ impl T107Vm {
             TRAP_BASE + TRAP_SIZE as u64,
             |uc, mem_type, addr, size, value| {
                 let pc = uc.reg_read(RegisterARM::PC).unwrap_or(0);
+                let is_new = uc.get_data_mut().logged_traps.insert(addr as u32);
                 if mem_type == MemType::READ {
-                    println!("\n[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x{:08X} (size {}) from PC 0x{:08X}", addr, size, pc);
-                    println!("[INFO] Unmapped MMIO read returned: 0x00000000\n");
+                    if is_new {
+                        println!("\n[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x{:08X} (size {}) from PC 0x{:08X}", addr, size, pc);
+                        println!("[INFO] Unmapped MMIO read returned: 0x00000000\n");
+                    }
                     let _ = uc.mem_write(addr, &vec![0u8; size]);
                 } else {
-                    println!("\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{:08X} (val 0x{:08X}, size {}) from PC 0x{:08X}\n", addr, value, size, pc);
+                    if is_new {
+                        println!("\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{:08X} (val 0x{:08X}, size {}) from PC 0x{:08X}\n", addr, value, size, pc);
+                    }
                 }
                 true
             },
@@ -254,10 +279,22 @@ impl T107Vm {
         Ok(())
     }
 
+    pub fn read_bytes(&self, addr: u64, size: usize) -> Result<Vec<u8>, String> {
+        let mut buf = vec![0u8; size];
+        self.uc.mem_read(addr, &mut buf)
+            .map_err(|e| format!("Failed to read {} bytes from 0x{:08X}: {:?}", size, addr, e))?;
+        Ok(buf)
+    }
+
     pub fn init_cpu(&mut self, entry_point: u64) -> Result<(), String> {
         self.entry_point = entry_point;
-        // High DRAM stack pointer
-        self.uc.reg_write(RegisterARM::SP, 0x8003_FF00)
+        // Stack pointer: SRAM (0x0000_FF00) for BootROM/FDL1, High DRAM (0x8003_FF00) for OS/Kernel
+        let sp = if entry_point < (SRAM_BASE + SRAM_SIZE as u64) {
+            0x0000_FF00
+        } else {
+            0x8003_FF00
+        };
+        self.uc.reg_write(RegisterARM::SP, sp)
             .map_err(|e| format!("Failed to write SP: {:?}", e))?;
         // ARM Supervisor (SVC) mode, IRQ/FIQ masked: 0x600000D3
         self.uc.reg_write(RegisterARM::CPSR, 0x6000_00D3)
@@ -273,6 +310,52 @@ impl T107Vm {
 
     pub fn set_entry_point(&mut self, entry_point: u64) -> Result<(), String> {
         self.init_cpu(entry_point)
+    }
+
+    pub fn load_pac(
+        &mut self,
+        pac: &PacArchive,
+        fdl1_addr: u64,
+        fdl2_addr: u64,
+        default_entry: u64,
+    ) -> Result<Option<u64>, String> {
+        let mut pac_boot_entry: Option<u64> = None;
+        for f in &pac.files {
+            let id_lower = f.id.to_lowercase();
+            if id_lower.contains("fdl1") {
+                println!("[PAC] Staging FDL1 partition ({} bytes) at 0x{:08X}", f.data.len(), fdl1_addr);
+                self.load_bytes(&f.data, fdl1_addr)?;
+            } else if id_lower.contains("fdl2") {
+                println!("[PAC] Staging FDL2 partition ({} bytes) at 0x{:08X}", f.data.len(), fdl2_addr);
+                self.load_bytes(&f.data, fdl2_addr)?;
+            } else if id_lower.contains("boot0") || id_lower.contains("spl") {
+                println!("[PAC] Staging BOOT0/SPL partition ({} bytes) into SPI NAND Block 0", f.data.len());
+                let chunk_len = f.data.len().min(2048);
+                self.uc.get_data_mut().sfc.write_page(0, 0, &f.data[..chunk_len]);
+                let _ = self.load_bytes(&f.data, FLASH_DIRECT_BASE);
+                if let Ok(hdr) = SprdHeader::parse(&f.data) {
+                    if f.data.len() > 32 {
+                        let _ = self.load_bytes(&f.data[32..], hdr.load_addr as u64);
+                    }
+                    pac_boot_entry = Some(hdr.entry_point as u64);
+                }
+            } else if id_lower.contains("boot") || id_lower.contains("kernel") || id_lower.contains("firmware") {
+                let load_addr = if f.load_addr != 0 { f.load_addr as u64 } else { default_entry };
+                println!("[PAC] Staging Kernel/Boot partition '{}' ({} bytes) at 0x{:08X}", f.id, f.data.len(), load_addr);
+                self.load_bytes(&f.data, load_addr)?;
+                if pac_boot_entry.is_none() {
+                    pac_boot_entry = Some(load_addr);
+                }
+            } else if id_lower.contains("system") || id_lower.contains("rootfs") {
+                println!("[PAC] Staging System partition ({} bytes) into SPI NAND Flash", f.data.len());
+                self.uc.get_data_mut().sfc.load_image(&f.data);
+            } else if f.load_addr != 0 {
+                // Secondary partitions with non-zero load address
+                println!("[PAC] Staging partition '{}' ({} bytes) at 0x{:08X}", f.id, f.data.len(), f.load_addr);
+                let _ = self.load_bytes(&f.data, f.load_addr as u64);
+            }
+        }
+        Ok(pac_boot_entry)
     }
 
     pub fn setup_atags(&mut self, atags_addr: u64, board_id: u32, cmdline: Option<String>) -> Result<(), String> {

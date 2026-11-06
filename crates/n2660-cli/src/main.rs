@@ -150,41 +150,32 @@ fn main() {
         }
     }
 
-    // Handle .PAC archive if provided
+    // Handle .PAC archive if provided explicitly (--pac) or passed as positional FIRMWARE argument
     let fdl1_file = args.fdl1.clone();
     let fdl2_file = args.fdl2.clone();
     let mut firmware_target = args.firmware.clone();
+    let mut pac_boot_entry: Option<u64> = None;
 
-    if let Some(pac_path) = &args.pac {
-        if let Ok(data) = std::fs::read(pac_path) {
-            if let Ok(pac) = PacArchive::parse(&data) {
-                println!("[PAC] Parsing vendor firmware container '{:?}' ({} partitions)...", pac_path, pac.files.len());
-                for f in pac.files {
-                    if f.id.eq_ignore_ascii_case("fdl1") {
-                        println!("[PAC] Found FDL1 partition ({} bytes)", f.data.len());
-                        let _ = vm.load_bytes(&f.data, args.fdl1_addr);
-                    } else if f.id.eq_ignore_ascii_case("fdl2") {
-                        println!("[PAC] Found FDL2 partition ({} bytes)", f.data.len());
-                        let _ = vm.load_bytes(&f.data, args.fdl2_addr);
-                    }
-                }
+    let pac_path_opt = args.pac.clone().or_else(|| {
+        if let Some(fw) = &firmware_target {
+            if fw.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("pac")) {
+                return Some(fw.clone());
             }
         }
-    } else if let Some(fw) = &firmware_target {
-        if let Some(ext) = fw.extension() {
-            if ext == "pac" {
-                if let Ok(data) = std::fs::read(fw) {
-                    if let Ok(pac) = PacArchive::parse(&data) {
-                        println!("[PAC] Parsing vendor firmware container '{:?}' ({} partitions)...", fw, pac.files.len());
-                        for f in pac.files {
-                            if f.id.eq_ignore_ascii_case("fdl1") {
-                                println!("[PAC] Found FDL1 partition ({} bytes)", f.data.len());
-                                let _ = vm.load_bytes(&f.data, args.fdl1_addr);
-                            } else if f.id.eq_ignore_ascii_case("fdl2") {
-                                println!("[PAC] Found FDL2 partition ({} bytes)", f.data.len());
-                                let _ = vm.load_bytes(&f.data, args.fdl2_addr);
-                            }
-                        }
+        None
+    });
+
+    if let Some(pac_path) = pac_path_opt {
+        if let Ok(data) = std::fs::read(&pac_path) {
+            if let Ok(pac) = PacArchive::parse(&data) {
+                println!("[PAC] Parsing vendor firmware container '{:?}' ({} partitions)...", pac_path, pac.files.len());
+                println!("[PAC] Product: {} ({}) | Flash Type: {}", pac.product_name, pac.product_version, pac.flash_type);
+                match vm.load_pac(&pac, args.fdl1_addr, args.fdl2_addr, args.entry) {
+                    Ok(entry_opt) => {
+                        pac_boot_entry = entry_opt;
+                    }
+                    Err(e) => {
+                        eprintln!("[PAC] Error staging firmware partitions: {}", e);
                     }
                 }
                 firmware_target = None;
@@ -239,6 +230,9 @@ fn main() {
     if args.bootrom {
         println!("[BootROM] Reset vector configured at 0x00000000");
         let _ = vm.set_entry_point(0x0000_0000);
+    } else if let Some(entry) = pac_boot_entry {
+        println!("[PAC] Configuring execution entry point at 0x{:08X}", entry);
+        let _ = vm.set_entry_point(entry);
     } else if let Some(fw_path) = &firmware_target {
         if let Ok(data) = std::fs::read(fw_path) {
             println!("[VM] Loading binary '{:?}' ({} bytes) to address 0x{:08X}...", fw_path, data.len(), args.entry);

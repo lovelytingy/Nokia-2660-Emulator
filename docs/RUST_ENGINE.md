@@ -94,7 +94,9 @@ make run
 ```
 
 ### Running Tests
-Execute the full test suite (both Rust workspace tests and Python integration tests):
+Execute the full native Rust test suite across all workspace crates and peripheral models:
 ```bash
+cargo test --workspace
+# or:
 make test
 ```

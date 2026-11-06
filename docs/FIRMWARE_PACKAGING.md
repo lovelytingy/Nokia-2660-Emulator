@@ -11,7 +11,7 @@ A `.PAC` file is a structured container holding:
 - Compressed or raw partition binaries (`FDL1`, `FDL2`, `BOOT0`, `BOOT1`, `BOOT`, `SYSTEM`, `USERDATA`).
 - Partition configuration descriptor XML (`partition.xml`).
 
-N2660Emu provides clean-room tools to inspect, unpack, and build `.PAC` packages via [`tools/pac_extractor.py`](file:///Users/lovelytingy/Documents/Personal-Projects/Nokia-2660-Emulator/tools/pac_extractor.py) and boot them directly in the emulator via [`bin/n2660emu`](file:///Users/lovelytingy/Documents/Personal-Projects/Nokia-2660-Emulator/bin/n2660emu).
+N2660Emu provides clean-room tools to inspect, unpack, and build `.PAC` packages via [`bin/pac_extractor`](file:///Users/lovelytingy/Documents/Personal-Projects/Nokia-2660-Emulator/bin/pac_extractor) and boot them directly in the emulator via [`bin/n2660emu`](file:///Users/lovelytingy/Documents/Personal-Projects/Nokia-2660-Emulator/bin/n2660emu).
 
 ---
 
@@ -95,31 +95,31 @@ When unpacked, an official firmware image contains the following core components
 ### 1. Listing Partitions
 To inspect a PAC file's header and partition records without writing files:
 ```bash
-python3 tools/pac_extractor.py list Nokia_2660_Flip.pac
+./bin/pac_extractor list Nokia_2660_Flip.pac
 ```
 
 ### 2. Extracting All Partitions
 To unpack all active partition images into a folder:
 ```bash
-python3 tools/pac_extractor.py extract Nokia_2660_Flip.pac -o extracted_fw/
+./bin/pac_extractor extract Nokia_2660_Flip.pac -o extracted_fw/
 ```
 
 ### 3. Extracting a Single Partition
 To extract only a specific binary (e.g. `FDL1`):
 ```bash
-python3 tools/pac_extractor.py extract Nokia_2660_Flip.pac --id FDL1 -o extracted_fw/
+./bin/pac_extractor extract Nokia_2660_Flip.pac --id FDL1 -o extracted_fw/
 ```
 
 ### 4. Dumping Partition Geometry XML
 To extract and print the flash partition layout XML:
 ```bash
-python3 tools/pac_extractor.py dump-xml Nokia_2660_Flip.pac
+./bin/pac_extractor dump-xml Nokia_2660_Flip.pac
 ```
 
 ### 5. Creating a Custom PAC Package
 To package custom bootloaders and images into a compliant `.PAC` archive:
 ```bash
-python3 tools/pac_extractor.py pack -o custom_fw.pac \
+./bin/pac_extractor pack -o custom_fw.pac \
     --name "Nokia 2660 Flip" \
     --version "CUSTOM_v1.0" \
     -f FDL1:build/fdl1.bin:0x00006200 \
@@ -131,12 +131,21 @@ python3 tools/pac_extractor.py pack -o custom_fw.pac \
 
 ## 5. Direct Execution in N2660Emu
 
-N2660Emu can accept `.PAC` containers directly as firmware arguments:
+N2660Emu can accept downloaded `.PAC` vendor archives directly:
 ```bash
-./bin/n2660emu path/to/firmware.pac --bsl
+# Direct boot in Desktop Host GUI mode
+./bin/n2660emu path/to/Nokia_2660_Flip_TA-1480.pac --gui
+
+# Direct boot in Headless CLI mode with instruction timeout
+./bin/n2660emu path/to/Nokia_2660_Flip_TA-1480.pac --timeout 15
 ```
-When passed a `.PAC` archive, the launcher automatically:
-1. Parses the container header and partition table.
-2. Caches and extracts `FDL1`, `FDL2`, and `BOOT0` to `build/pac_cache/<firmware_name>/`.
-3. Resolves memory load addresses (`0x00006200` for FDL1, `0x80100000` for FDL2).
-4. Initiates the BSL protocol handshake over UART0 and boots the emulator.
+
+When passed a `.PAC` archive, the emulator automatically:
+1. Validates the `0xFFFAFFFA` PAC header signature and reads target metadata (`Nokia 2660 Flip`).
+2. Iterates across partition records and maps them:
+   - `FDL1` -> staged into Internal SRAM at `0x00006200`.
+   - `FDL2` -> staged into High DRAM at `0x80100000`.
+   - `BOOT0` / `SPL` -> staged into SPI NAND Block 0 & Direct Flash XIP window (`0x60000000`).
+   - `BOOT` / `KERNEL` -> staged into High DRAM at `0x80000000`.
+   - `SYSTEM` / `ROOTFS` -> staged directly into virtual Winbond W25N01GV 128 MB flash memory.
+3. Configures execution entry point (to BOOT0 / Kernel) and launches the dual-screen GUI!

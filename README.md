@@ -77,14 +77,14 @@ make test
 The main emulator CLI [`bin/n2660emu`](bin/n2660emu) provides full control over hardware simulation:
 
 ```bash
-# Launch Desktop GUI with custom casing theme ("Pop Red", "Deep Blue", "Classic Black")
-./bin/n2660emu --gui --theme "Pop Red"
+# Launch Desktop GUI with built-in interactive Nokia 2660 Flip OS demo
+./bin/n2660emu --gui
+
+# Direct execution of official downloaded vendor .PAC firmware in Desktop GUI
+./bin/n2660emu path/to/Nokia_2660_Flip_TA-1480.pac --gui
 
 # Launch directly with clamshell closed (outer sub-display active)
 ./bin/n2660emu --gui --flip closed
-
-# Execute vendor .PAC container with automatic BSL handshake & FDL staging
-./bin/n2660emu firmware.pac --bsl
 
 # Boot ARM Linux / MOCOR OS kernel with ATAGS handoff
 ./bin/n2660emu zImage --entry 0x80008000 --atags --cmdline "console=ttyS0,115200 root=/dev/mtdblock3 ro mem=48M"
@@ -111,6 +111,7 @@ Comprehensive technical documentation is maintained in the [`docs/`](docs/) dire
 
 | Document | Description |
 | :--- | :--- |
+| [**Real Firmware Execution Guide**](docs/REAL_FIRMWARE_GUIDE.md) | How to download, inspect, stage, and run official Nokia 2660 `.PAC` firmware |
 | [**Architecture Guide**](docs/ARCHITECTURE.md) | High-level emulator design, SoC architecture, and data pipelines |
 | [**Rust Engine & Benchmarks**](docs/RUST_ENGINE.md) | Native Rust engine details, zero-cost FFI, and performance benchmarks |
 | [**Desktop Host GUI**](docs/DESKTOP_GUI.md) | Nokia 2660 Flip physical skin, hit-testing, dual LCDs, and controls |

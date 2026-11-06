@@ -117,17 +117,36 @@ impl SprdDisplaySubsystem {
                 self.gc9307.dc_mode = (val & 0x1) != 0;
             }
             0x00 => {
-                // SPI_TXD_REG: Transmit byte based on D/C flag
-                let byte = (val & 0xFF) as u8;
+                // SPI_TXD_REG: Transmit byte/word based on D/C flag
                 if !self.gc9307.dc_mode {
-                    self.gc9307.write_cmd(byte);
+                    self.gc9307.write_cmd((val & 0xFF) as u8);
+                } else if val <= 0xFF {
+                    self.gc9307.write_data(val as u8);
+                } else if val <= 0xFFFF {
+                    // 16-bit RGB565 pixel
+                    self.gc9307.write_data((val >> 8) as u8);
+                    self.gc9307.write_data((val & 0xFF) as u8);
                 } else {
-                    self.gc9307.write_data(byte);
+                    // 32-bit dual-pixel pair
+                    self.gc9307.write_data((val >> 24) as u8);
+                    self.gc9307.write_data((val >> 16) as u8);
+                    self.gc9307.write_data((val >> 8) as u8);
+                    self.gc9307.write_data((val & 0xFF) as u8);
                 }
             }
             0x04 => {
                 // Dedicated data register fallback
-                self.gc9307.write_data((val & 0xFF) as u8);
+                if val <= 0xFF {
+                    self.gc9307.write_data(val as u8);
+                } else if val <= 0xFFFF {
+                    self.gc9307.write_data((val >> 8) as u8);
+                    self.gc9307.write_data((val & 0xFF) as u8);
+                } else {
+                    self.gc9307.write_data((val >> 24) as u8);
+                    self.gc9307.write_data((val >> 16) as u8);
+                    self.gc9307.write_data((val >> 8) as u8);
+                    self.gc9307.write_data((val & 0xFF) as u8);
+                }
             }
             _ => {}
         }
@@ -147,17 +166,36 @@ impl SprdDisplaySubsystem {
                 self.st7735.dc_mode = (val & 0x1) != 0;
             }
             0x00 => {
-                // SPI_TXD_REG: Transmit byte based on D/C flag
-                let byte = (val & 0xFF) as u8;
+                // SPI_TXD_REG: Transmit byte/word based on D/C flag
                 if !self.st7735.dc_mode {
-                    self.st7735.write_cmd(byte);
+                    self.st7735.write_cmd((val & 0xFF) as u8);
+                } else if val <= 0xFF {
+                    self.st7735.write_data(val as u8);
+                } else if val <= 0xFFFF {
+                    // 16-bit RGB565 pixel
+                    self.st7735.write_data((val >> 8) as u8);
+                    self.st7735.write_data((val & 0xFF) as u8);
                 } else {
-                    self.st7735.write_data(byte);
+                    // 32-bit dual-pixel pair
+                    self.st7735.write_data((val >> 24) as u8);
+                    self.st7735.write_data((val >> 16) as u8);
+                    self.st7735.write_data((val >> 8) as u8);
+                    self.st7735.write_data((val & 0xFF) as u8);
                 }
             }
             0x04 => {
                 // Dedicated data register fallback
-                self.st7735.write_data((val & 0xFF) as u8);
+                if val <= 0xFF {
+                    self.st7735.write_data(val as u8);
+                } else if val <= 0xFFFF {
+                    self.st7735.write_data((val >> 8) as u8);
+                    self.st7735.write_data((val & 0xFF) as u8);
+                } else {
+                    self.st7735.write_data((val >> 24) as u8);
+                    self.st7735.write_data((val >> 16) as u8);
+                    self.st7735.write_data((val >> 8) as u8);
+                    self.st7735.write_data((val & 0xFF) as u8);
+                }
             }
             _ => {}
         }

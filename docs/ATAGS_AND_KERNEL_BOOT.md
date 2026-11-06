@@ -73,13 +73,13 @@ struct tag_header {
 
 ## 4. Emulation & Tooling Support
 
-### Synthesizer & Inspector: `tools/atags.py`
+### Synthesizer & Inspector: `bin/atags`
 
-`tools/atags.py` provides standalone synthesis and structural inspection of ARM Boot Tags:
+`bin/atags` provides standalone synthesis and structural inspection of ARM Boot Tags:
 
 #### Generating an ATAGS Binary
 ```bash
-python3 tools/atags.py build -o build/atags.bin \
+./bin/atags build -o build/atags.bin \
     --dram-base 0x80000000 \
     --dram-size 0x03000000 \
     --cmdline "console=ttyS0,115200 root=/dev/mtdblock3 ro mem=48M earlycon"
@@ -87,7 +87,7 @@ python3 tools/atags.py build -o build/atags.bin \
 
 #### Inspecting an ATAGS Binary
 ```bash
-python3 tools/atags.py inspect build/atags.bin --base 0x80000100
+./bin/atags inspect build/atags.bin --base 0x80000100
 ```
 
 Sample output:
