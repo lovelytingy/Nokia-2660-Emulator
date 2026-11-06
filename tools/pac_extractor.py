@@ -5,7 +5,7 @@ Parses and extracts partition images (FDL1, FDL2, BOOT0, BOOT1, Kernel)
 from Nokia 2660 Flip (UMS9117) vendor PAC files.
 
 Copyright (c) 2026 N2660Emu Developers
-SPDX-License-Identifier: GPL-2.0-or-later
+SPDX-License-Identifier: MIT
 """
 
 import os

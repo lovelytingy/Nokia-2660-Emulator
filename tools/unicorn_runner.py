@@ -4,7 +4,7 @@ N2660Emu Unicorn Execution Runner
 Implements Unisoc T107 (UMS9117) memory map and SPRD UART MMIO in Unicorn.
 
 Copyright (c) 2026 N2660Emu Developers
-SPDX-License-Identifier: GPL-2.0-or-later
+SPDX-License-Identifier: MIT
 """
 
 import sys

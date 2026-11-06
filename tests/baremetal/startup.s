@@ -3,7 +3,7 @@
  * ARM Cortex-A7 (ARMv7-A)
  *
  * Copyright (c) 2026 N2660Emu Developers
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 
     .syntax unified

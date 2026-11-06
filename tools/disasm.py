@@ -4,7 +4,7 @@ Capstone Disassembler with Unisoc T107 Symbol Annotations
 Disassembles ARMv7-A / Thumb-2 firmware binaries and identifies hardware MMIO references.
 
 Copyright (c) 2026 N2660Emu Developers
-SPDX-License-Identifier: GPL-2.0-or-later
+SPDX-License-Identifier: MIT
 """
 
 import sys

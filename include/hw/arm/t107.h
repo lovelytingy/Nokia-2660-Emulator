@@ -2,7 +2,7 @@
  * Unisoc T107 (UMS9117) SoC and Nokia 2660 Machine Definition
  *
  * Copyright (c) 2026 N2660Emu Developers
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef HW_ARM_T107_H

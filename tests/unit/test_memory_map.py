@@ -4,7 +4,7 @@ Unit tests for N2660Emu memory map, peripheral register definitions,
 and baremetal test execution.
 
 Copyright (c) 2026 N2660Emu Developers
-SPDX-License-Identifier: GPL-2.0-or-later
+SPDX-License-Identifier: MIT
 """
 
 import unittest
