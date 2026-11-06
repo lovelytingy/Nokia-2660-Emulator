@@ -25,6 +25,8 @@ for pyver in ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]:
 from tools.unicorn_runner import (
     SRAM_BASE, SRAM_SIZE, DRAM_BASE, DRAM_SIZE,
     SPRD_UART0_BASE, SPRD_TXD_REG, SPRD_STS1_REG,
+    SPRD_TIMERS_BASE, TIMER_LOAD_LO, TIMER_VALUE_LO, TIMER_CTL,
+    SPRD_GPIO_BASE, GPIO_DATA, GPIO_DIR,
     T107UnicornVM
 )
 
@@ -44,6 +46,17 @@ class TestN2660EmuMemoryMap(unittest.TestCase):
         self.assertEqual(SPRD_UART0_BASE, 0x50000000)
         self.assertEqual(SPRD_TXD_REG, 0x0000)
         self.assertEqual(SPRD_STS1_REG, 0x000C)
+
+    def test_sprd_timer_registers(self):
+        self.assertEqual(SPRD_TIMERS_BASE, 0x50030000)
+        self.assertEqual(TIMER_LOAD_LO, 0x0000)
+        self.assertEqual(TIMER_VALUE_LO, 0x0008)
+        self.assertEqual(TIMER_CTL, 0x0010)
+
+    def test_sprd_gpio_registers(self):
+        self.assertEqual(SPRD_GPIO_BASE, 0x50040000)
+        self.assertEqual(GPIO_DATA, 0x0000)
+        self.assertEqual(GPIO_DIR, 0x0008)
 
     def test_baremetal_payload_execution(self):
         bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")

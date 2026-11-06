@@ -12,6 +12,8 @@
 #include "target/arm/cpu-qom.h"
 #include "hw/sysbus.h"
 #include "hw/char/sprd_uart.h"
+#include "hw/timer/sprd_timer.h"
+#include "hw/gpio/sprd_gpio.h"
 #include "hw/boards.h"
 
 #define TYPE_T107_SOC "t107-soc"
@@ -51,6 +53,8 @@ struct T107SocState {
     MemoryRegion mmio_trap;
 
     SprdUartState uart[T107_NUM_UARTS];
+    SprdTimerState timer;
+    SprdGpioState gpio;
 };
 
 struct Nokia2660MachineState {

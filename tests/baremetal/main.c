@@ -9,6 +9,18 @@
 #include <stddef.h>
 #include "sprd_uart.h"
 
+/* Peripheral Base Addresses */
+#define SPRD_TIMERS_BASE   0x50030000
+#define TIMER_LOAD_LO      0x0000
+#define TIMER_VALUE_LO     0x0008
+#define TIMER_CTL          0x0010
+#define TIMER_INT          0x0014
+
+#define SPRD_GPIO_BASE     0x50040000
+#define GPIO_DATA          0x0000
+#define GPIO_DIR           0x0008
+#define GPIO_INEN          0x0028
+
 static inline uint32_t read_cp15_midr(void)
 {
     uint32_t val;
@@ -120,7 +132,55 @@ int main(void)
     /* Test 256 words (1 KB) at offset 0x80020000 */
     int dram_ok = test_memory_region("High DRAM (LPDDR2)", 0x80020000, 256);
 
-    /* 4. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 4. SPRD System Timer Test */
+    uart_puts("[TEST] Testing SPRD System Timer at 0x50030000...\n");
+    volatile uint32_t *t_load = (volatile uint32_t *)(SPRD_TIMERS_BASE + TIMER_LOAD_LO);
+    volatile uint32_t *t_val  = (volatile uint32_t *)(SPRD_TIMERS_BASE + TIMER_VALUE_LO);
+    volatile uint32_t *t_ctl  = (volatile uint32_t *)(SPRD_TIMERS_BASE + TIMER_CTL);
+
+    *t_load = 0x00010000;
+    *t_ctl  = (1 << 0) | (1 << 1); /* Periodic mode + Enable */
+
+    uint32_t val1 = *t_val;
+    for (volatile int i = 0; i < 50; i++);
+    uint32_t val2 = *t_val;
+
+    uart_puts("[TIMER] Read 1: ");
+    uart_puthex32(val1);
+    uart_puts(" -> Read 2: ");
+    uart_puthex32(val2);
+    uart_puts("\n");
+
+    int timer_ok = (val2 <= val1);
+    if (timer_ok) {
+        uart_puts("[PASS] SPRD System Timer counter down-counting verified.\n");
+    } else {
+        uart_puts("[FAIL] SPRD System Timer counter did not decrement.\n");
+    }
+
+    /* 5. SPRD GPIO Controller Test */
+    uart_puts("[TEST] Testing SPRD GPIO Controller at 0x50040000...\n");
+    volatile uint32_t *g_data = (volatile uint32_t *)(SPRD_GPIO_BASE + GPIO_DATA);
+    volatile uint32_t *g_dir  = (volatile uint32_t *)(SPRD_GPIO_BASE + GPIO_DIR);
+
+    /* Configure Pin 4 and Pin 5 as outputs (0x30) */
+    *g_dir = 0x00000030;
+    /* Write 0x20 (Pin 5 high, Pin 4 low) */
+    *g_data = 0x00000020;
+    uint32_t readback = *g_data;
+
+    uart_puts("[GPIO] Written: 0x00000020 -> Readback: ");
+    uart_puthex32(readback);
+    uart_puts("\n");
+
+    int gpio_ok = ((readback & 0x30) == 0x20);
+    if (gpio_ok) {
+        uart_puts("[PASS] SPRD GPIO pin direction and output state verified.\n");
+    } else {
+        uart_puts("[FAIL] SPRD GPIO readback mismatch.\n");
+    }
+
+    /* 6. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -128,11 +188,11 @@ int main(void)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 5. Summary */
+    /* 7. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1 MILESTONE CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, Internal SRAM, DRAM, and Virtual UART OK!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1 & PHASE 2 MILESTONE CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, and GPIO Verified!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }

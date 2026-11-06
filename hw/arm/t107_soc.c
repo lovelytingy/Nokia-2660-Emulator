@@ -58,6 +58,9 @@ static void t107_soc_init(Object *obj)
     for (int i = 0; i < T107_NUM_UARTS; i++) {
         object_initialize_child(obj, "uart[*]", &s->uart[i], TYPE_SPRD_UART);
     }
+
+    object_initialize_child(obj, "timer", &s->timer, TYPE_SPRD_TIMER);
+    object_initialize_child(obj, "gpio", &s->gpio, TYPE_SPRD_GPIO);
 }
 
 static void t107_soc_realize(DeviceState *dev, Error **errp)
@@ -98,6 +101,22 @@ static void t107_soc_realize(DeviceState *dev, Error **errp)
         memory_region_add_subregion_overlap(sysmem, t107_uart_addrs[i],
                                             sysbus_mmio_get_region(sbd, 0), 1);
     }
+
+    /* 5. System Timer (mapped at 0x50030000) */
+    SysBusDevice *timer_sbd = SYS_BUS_DEVICE(&s->timer);
+    if (!sysbus_realize(timer_sbd, errp)) {
+        return;
+    }
+    memory_region_add_subregion_overlap(sysmem, T107_TIMERS_BASE,
+                                        sysbus_mmio_get_region(timer_sbd, 0), 1);
+
+    /* 6. GPIO Controller (mapped at 0x50040000) */
+    SysBusDevice *gpio_sbd = SYS_BUS_DEVICE(&s->gpio);
+    if (!sysbus_realize(gpio_sbd, errp)) {
+        return;
+    }
+    memory_region_add_subregion_overlap(sysmem, T107_GPIO_BASE,
+                                        sysbus_mmio_get_region(gpio_sbd, 0), 1);
 }
 
 static Property t107_soc_properties[] = {
