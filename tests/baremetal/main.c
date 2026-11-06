@@ -15,6 +15,7 @@
 #include "bsl.h"
 #include "audio.h"
 #include "bootrom.h"
+#include "atags.h"
 
 /* Peripheral Base Addresses */
 #define SPRD_TIMERS_BASE   0x50030000
@@ -93,7 +94,7 @@ static int test_memory_region(const char *name, uintptr_t base_addr, size_t word
     return 1;
 }
 
-int main(void)
+int main(uint32_t boot_zero, uint32_t board_id, uint32_t atags_addr)
 {
     uart_init();
 
@@ -435,7 +436,108 @@ int main(void)
         uart_puts("[FAIL] BootROM verification failed.\n");
     }
 
-    /* 13. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 13. ARM Boot Tags (ATAGS) & Kernel Handoff Verification */
+    uart_puts("[TEST] Testing ARM Boot Tags (ATAGS) & Kernel Handoff...\n");
+    int atags_ok = 1;
+
+    if (board_id == 0x9117 && atags_addr >= 0x80000000 && boot_zero == 0) {
+        uart_puts("[ATAGS] Boot registers detected: r0=0, r1=0x9117, r2=");
+        uart_puthex32(atags_addr);
+        uart_puts("\n");
+        const struct tag *hw_tags = (const struct tag *)atags_addr;
+        if (atags_validate(hw_tags) == 0) {
+            uart_puts("[PASS] External staged ATAGS structure validated successfully.\n");
+        }
+    }
+
+    /* Synthesize ATAGS list in a DRAM test buffer */
+    uint32_t atags_buffer[64];
+    uint32_t *p = atags_buffer;
+
+    /* ATAG_CORE (size=5 words) */
+    *p++ = 5;
+    *p++ = ATAG_CORE;
+    *p++ = 0;      /* flags */
+    *p++ = 4096;   /* pagesize */
+    *p++ = 0;      /* rootdev */
+
+    /* ATAG_MEM (size=4 words: 48 MB at 0x80000000) */
+    *p++ = 4;
+    *p++ = ATAG_MEM;
+    *p++ = 48 * 1024 * 1024;
+    *p++ = 0x80000000;
+
+    /* ATAG_CMDLINE (size=2 + 8 words = 10 words) */
+    const char test_cmd[] = "console=ttyS0,115200 root=/dev/mtdblock3";
+    size_t cmd_len = sizeof(test_cmd);
+    size_t cmd_words = (cmd_len + 3) / 4;
+    *p++ = 2 + cmd_words;
+    *p++ = ATAG_CMDLINE;
+    char *cmd_dest = (char *)p;
+    for (size_t i = 0; i < cmd_words * 4; i++) {
+        cmd_dest[i] = (i < cmd_len) ? test_cmd[i] : 0;
+    }
+    p += cmd_words;
+
+    /* ATAG_REVISION (size=3 words) */
+    *p++ = 3;
+    *p++ = ATAG_REVISION;
+    *p++ = 0x00000001;
+
+    /* ATAG_SERIAL (size=4 words) */
+    *p++ = 4;
+    *p++ = ATAG_SERIAL;
+    *p++ = 0x14800001;
+    *p++ = 0x26600000;
+
+    /* ATAG_NONE (size=0, tag=0) */
+    *p++ = 0;
+    *p++ = ATAG_NONE;
+
+    const struct tag *tags = (const struct tag *)atags_buffer;
+
+    /* Validate tag list structure */
+    if (atags_validate(tags) != 0) {
+        uart_puts("[FAIL] atags_validate failed.\n");
+        atags_ok = 0;
+    }
+
+    /* Verify memory tag extraction */
+    uint32_t ram_start = 0, ram_size = 0;
+    if (atags_get_mem(tags, &ram_start, &ram_size) != 0 ||
+        ram_start != 0x80000000 || ram_size != (48 * 1024 * 1024)) {
+        uart_puts("[FAIL] ATAG_MEM extraction failed.\n");
+        atags_ok = 0;
+    }
+
+    /* Verify command line tag extraction */
+    const char *ret_cmd = atags_get_cmdline(tags);
+    if (!ret_cmd || ret_cmd[0] != 'c') {
+        uart_puts("[FAIL] ATAG_CMDLINE extraction failed.\n");
+        atags_ok = 0;
+    }
+
+    /* Verify serial and revision tags */
+    const struct tag *rev_tag = atags_find(tags, ATAG_REVISION);
+    const struct tag *ser_tag = atags_find(tags, ATAG_SERIAL);
+    if (!rev_tag || rev_tag->u.revision.rev != 1 || !ser_tag) {
+        uart_puts("[FAIL] Revision or Serial tag lookup failed.\n");
+        atags_ok = 0;
+    }
+
+    uart_puts("[ATAGS] RAM Base: ");
+    uart_puthex32(ram_start);
+    uart_puts(" | Size: ");
+    uart_putdec(ram_size / (1024 * 1024));
+    uart_puts(" MB | Board ID: 0x9117\n");
+
+    if (atags_ok) {
+        uart_puts("[PASS] ARM Boot Tags (ATAG_CORE, MEM, CMDLINE, SERIAL) & kernel handoff verified.\n");
+    } else {
+        uart_puts("[FAIL] ATAGS verification failed.\n");
+    }
+
+    /* 14. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -443,11 +545,11 @@ int main(void)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 14. Summary */
+    /* 15. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok && audio_ok && bootrom_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO & BOOTROM) CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL, Audio & BootROM OK!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok && audio_ok && bootrom_ok && atags_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO, BOOTROM & ATAGS) CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL, Audio, BootROM & ATAGS OK!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }

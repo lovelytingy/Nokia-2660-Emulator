@@ -37,6 +37,15 @@ except ImportError:
         SPRD_BOOT0_MAGIC, SPRD_BOOT0_MAGIC_BIMG, create_boot0_image, BLOCK_SIZE
     )
 
+try:
+    from tools.atags import (
+        create_standard_n2660_atags, DEFAULT_CMDLINE, DEFAULT_BOARD_ID, DEFAULT_ATAGS_ADDR
+    )
+except ImportError:
+    from atags import (
+        create_standard_n2660_atags, DEFAULT_CMDLINE, DEFAULT_BOARD_ID, DEFAULT_ATAGS_ADDR
+    )
+
 for pyver in ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]:
     p = os.path.expanduser(f"~/Library/Python/{pyver}/lib/python/site-packages")
     if os.path.isdir(p) and p not in sys.path:
@@ -877,6 +886,17 @@ class T107UnicornVM:
         print(f"[VM BootROM] Staged BOOT0 ({len(data)} bytes) into SPI NAND Block {block_index} (Flash Offset 0x{offset:08X})")
         return len(data)
 
+    def setup_atags(self, ram_base=0x80000000, ram_size=48*1024*1024,
+                    cmdline=DEFAULT_CMDLINE, atags_addr=DEFAULT_ATAGS_ADDR, board_id=DEFAULT_BOARD_ID):
+        """Constructs and stages standard ARM ATAGS in DRAM, setting up r0, r1, r2 registers."""
+        data = create_standard_n2660_atags(dram_base=ram_base, dram_size=ram_size, cmdline=cmdline)
+        self.uc.mem_write(atags_addr, data)
+        self.uc.reg_write(UC_ARM_REG_R0, 0)
+        self.uc.reg_write(UC_ARM_REG_R1, board_id)
+        self.uc.reg_write(UC_ARM_REG_R2, atags_addr)
+        print(f"[VM ATAGS] Staged ARM Boot Tags ({len(data)} bytes) at 0x{atags_addr:08X} (r0=0, r1=0x{board_id:04X}, r2=0x{atags_addr:08X})")
+        return len(data)
+
     def run(self, entry_point, end_address=None, timeout_sec=10):
         # Setup Cortex-A7 initial registers
         # CPSR: Supervisor mode (0x13), IRQ/FIQ disabled (0xD3)
@@ -1063,6 +1083,10 @@ def main():
     parser.add_argument("--boot0", type=str, default=None, help="Path to BOOT0 binary to stage into SPI NAND Block 0")
     parser.add_argument("--boot-mode", choices=["auto", "bsl", "nand"], default="auto", help="Boot mode dispatch (default: auto)")
     parser.add_argument("--boot-key", choices=["star", "none"], default="none", help="Hardware boot key to hold at reset (default: none)")
+    parser.add_argument("--atags", action="store_true", help="Stage ARM Boot Tags (ATAGS) at 0x80000100 for kernel booting")
+    parser.add_argument("--atags-addr", type=lambda x: int(x, 0), default=DEFAULT_ATAGS_ADDR, help="Physical DRAM address to stage ATAGS (default: 0x80000100)")
+    parser.add_argument("--board-id", type=lambda x: int(x, 0), default=DEFAULT_BOARD_ID, help="ARM machine/board ID in r1 (default: 0x9117)")
+    parser.add_argument("--cmdline", type=str, default=DEFAULT_CMDLINE, help="Kernel command line string passed via ATAG_CMDLINE")
     parser.add_argument("--audio-dump", type=str, default=None, help="Path to dump audio output as WAV file")
     args = parser.parse_args()
 
@@ -1109,6 +1133,13 @@ def main():
             sys.exit(1)
         vm.load_binary(args.binary, args.entry)
         entry_point = args.entry
+
+    if args.atags:
+        if args.binary and os.path.isfile(args.binary):
+            bin_sz = os.path.getsize(args.binary)
+            if args.entry <= args.atags_addr < args.entry + bin_sz:
+                print(f"[VM ATAGS WARNING] Staging ATAGS at 0x{args.atags_addr:08X} overlaps with loaded binary [0x{args.entry:08X} - 0x{args.entry + bin_sz:08X}]!")
+        vm.setup_atags(cmdline=args.cmdline, atags_addr=args.atags_addr, board_id=args.board_id)
 
     success = vm.run(entry_point=entry_point, timeout_sec=args.timeout)
 

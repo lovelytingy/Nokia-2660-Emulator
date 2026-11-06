@@ -17,7 +17,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False, flash=None, fdl1=None, fdl1_addr=0x00006200, fdl2=None, fdl2_addr=0x80100000, bsl=False, audio_dump=None, bootrom=False, bootrom_file=None, boot0=None, boot_mode="auto", boot_key="none"):
+def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False, flash=None, fdl1=None, fdl1_addr=0x00006200, fdl2=None, fdl2_addr=0x80100000, bsl=False, audio_dump=None, bootrom=False, bootrom_file=None, boot0=None, boot_mode="auto", boot_key="none", atags=False, cmdline=None, atags_addr=0x80000100, board_id=0x9117):
     script_path = os.path.join(PROJECT_ROOT, "tools", "unicorn_runner.py")
     cmd = [
         sys.executable,
@@ -40,6 +40,10 @@ def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dum
         cmd.extend(["--bootrom-file", bootrom_file])
     if boot0:
         cmd.extend(["--boot0", boot0])
+    if atags:
+        cmd.extend(["--atags", "--atags-addr", hex(atags_addr), "--board-id", hex(board_id)])
+    if cmdline:
+        cmd.extend(["--cmdline", cmdline])
     if fdl1:
         cmd.extend(["--fdl1", fdl1, "--fdl1-addr", hex(fdl1_addr)])
     if fdl2:
@@ -146,6 +150,10 @@ Examples:
     parser.add_argument("--boot-mode", choices=["auto", "bsl", "nand"], default="auto", help="Boot mode dispatch (default: auto)")
     parser.add_argument("--boot-key", choices=["star", "none"], default="none", help="Hardware boot key to hold at reset (default: none)")
     parser.add_argument("--audio-dump", type=str, default=None, help="Path to dump audio output as WAV file")
+    parser.add_argument("--atags", action="store_true", help="Stage ARM Boot Tags (ATAGS) at 0x80000100 for kernel booting")
+    parser.add_argument("--atags-addr", type=lambda x: int(x, 0), default=0x80000100, help="Physical DRAM address to stage ATAGS (default: 0x80000100)")
+    parser.add_argument("--board-id", type=lambda x: int(x, 0), default=0x9117, help="ARM machine/board ID in r1 (default: 0x9117)")
+    parser.add_argument("--cmdline", type=str, default=None, help="Kernel command line string passed via ATAG_CMDLINE")
 
     args, unknown = parser.parse_known_args()
 
@@ -203,7 +211,9 @@ Examples:
                                  fdl2=args.fdl2, fdl2_addr=args.fdl2_addr, bsl=args.bsl,
                                  audio_dump=args.audio_dump,
                                  bootrom=args.bootrom, bootrom_file=args.bootrom_file,
-                                 boot0=args.boot0, boot_mode=args.boot_mode, boot_key=args.boot_key)
+                                 boot0=args.boot0, boot_mode=args.boot_mode, boot_key=args.boot_key,
+                                 atags=args.atags, cmdline=args.cmdline,
+                                 atags_addr=args.atags_addr, board_id=args.board_id)
     else:
         machine = "virt" if engine == "qemu-virt" else "nokia-2660"
         ret = run_qemu_system(fw_path, machine=machine, gdb=args.gdb, wait_gdb=args.wait_gdb, extra_args=unknown)

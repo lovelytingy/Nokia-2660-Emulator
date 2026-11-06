@@ -33,6 +33,11 @@ Reset_Handler:
     /* Set up Stack Pointer */
     ldr sp, =_stack_top
 
+    /* Preserve boot/kernel handoff registers (r0, r1, r2) */
+    mov r4, r0
+    mov r5, r1
+    mov r6, r2
+
     /* Zero out .bss */
     ldr r0, =_sbss
     ldr r1, =_ebss
@@ -49,6 +54,11 @@ Reset_Handler:
     isb
     mov r0, #(1 << 30)      /* Enable VFP in FPEXC */
     vmsr fpexc, r0
+
+    /* Pass boot handoff registers to main(r0, r1, r2) */
+    mov r0, r4
+    mov r1, r5
+    mov r2, r6
 
     /* Jump to C entry point */
     bl main
