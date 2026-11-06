@@ -11,6 +11,7 @@
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"
 #include "hw/display/gc9307.h"
+#include "hw/display/st7735.h"
 #include "qom/object.h"
 
 #define TYPE_SPRD_SPI "sprd-spi"
@@ -52,6 +53,7 @@ struct SprdSPIState {
 
     /* Attached display device */
     GC9307State *lcd;
+    ST7735State *sub_lcd;
     bool dc_data_mode; /* Data/Command pin state */
 };
 

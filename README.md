@@ -50,30 +50,34 @@ Nokia-2660-Emulator/
 │   ├── char/
 │   │   └── sprd_uart.c          # QEMU Unisoc SPRD UART model
 │   ├── display/
-│   │   └── gc9307.c             # GalaxyCore GC9307 240x320 TFT LCD controller
+│   │   ├── gc9307.c             # GalaxyCore GC9307 240x320 TFT LCD controller (Main screen)
+│   │   └── st7735.c             # Sitronix ST7735 120x160 TFT LCD controller (Outer sub-screen)
 │   ├── gpio/
 │   │   └── sprd_gpio.c          # Unisoc SPRD GPIO controller
 │   ├── input/
 │   │   └── sprd_kpd.c           # Unisoc SPRD Keypad matrix controller
 │   ├── ssi/
-│   │   └── sprd_spi.c           # Unisoc SPRD SPI host controller
+│   │   └── sprd_spi.c           # Unisoc SPRD SPI host controller (SPI0 & SPI1)
 │   └── timer/
 │       └── sprd_timer.c         # Unisoc SPRD System Timer
 ├── include/
 │   └── hw/
 │       ├── arm/t107.h           # SoC and machine state headers
 │       ├── char/sprd_uart.h     # SPRD UART register defines and state
-│       ├── display/gc9307.h     # GC9307 command set and LCD state
+│       ├── display/
+│       │   ├── gc9307.h         # GC9307 command set and LCD state
+│       │   └── st7735.h         # ST7735 outer sub-screen state
 │       ├── gpio/sprd_gpio.h     # SPRD GPIO registers and bank definitions
 │       ├── input/sprd_kpd.h     # Keypad matrix and Nokia keycode definitions
 │       ├── ssi/sprd_spi.h       # SPRD SPI host interface
 │       └── timer/sprd_timer.h   # SPRD System Timer registers
 ├── tests/
 │   ├── baremetal/               # ARM Cortex-A7 baremetal verification firmware
-│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, LCD, KPD tests
+│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, Displays, KPD tests
 │   │   ├── startup.s            # Vector table, stack setup, VFP/NEON enable
 │   │   ├── sprd_uart.c          # Baremetal UART driver
 │   │   ├── gc9307.c             # Baremetal GC9307 LCD driver & test pattern
+│   │   ├── st7735.c             # Baremetal ST7735 outer sub-display driver
 │   │   ├── kpd.c                # Baremetal Keypad and Hall flip sensor driver
 │   │   ├── linker.ld            # Linker script targeting T107 memory map
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
@@ -149,14 +153,17 @@ Output:
 [FLIP] Hall effect sensor state: OPEN (Pin 0 = 1)
 [KPD] Key status STATUS0: 0x00000000 | STATUS1: 0x00000000
 [PASS] Keypad matrix and flip sensor interface verified.
+[TEST] Initializing Outer Sub-Display (1.77" 120x160 QQVGA) at SPI1 0x50090000...
+[SUB-LCD] Drawing 120x160 outer screen clock & status frame...
+[PASS] Outer sub-display rendering test completed.
 [TEST] Triggering MMIO read at unmapped address 0x40001000...
 
-[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x800004A4
+[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x800004D0
 [INFO] Unmapped MMIO read returned: 0x00000000
 
 --------------------------------------------------------
-[RESULT] *** ALL PHASE 1, 2, AND 3 (DISPLAY & KEYPAD) CHECKS PASSED ***
-[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD & Flip OK!
+[RESULT] *** ALL PHASE 1, 2, AND 3 (DUAL DISPLAY & INPUT) CHECKS PASSED ***
+[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip & Sub-LCD OK!
 --------------------------------------------------------
 ```
 
@@ -173,10 +180,14 @@ Trace CPU instructions as they execute in real time:
 make trace
 ```
 
-### 5. Render and Dump Display Framebuffer
-Initialize the GalaxyCore GC9307 screen, render the 240x320 test graphics, and dump the framebuffer image:
+### 5. Render Primary and Secondary Sub-Displays
+Render test graphics and dump high-resolution framebuffer PPM images:
 ```bash
+# Render and dump 240x320 main display:
 make screen
+
+# Render and dump 120x160 outer sub-screen:
+make sub-screen
 ```
 
 ### 6. Run Automated Unit Tests
@@ -219,7 +230,7 @@ To list partition layouts and load addresses without extracting:
 
 - [x] **Phase 1: CPU and Memory Emulation** (ARM Cortex-A7, SRAM, DRAM, SPRD UART, Baremetal test passed)
 - [x] **Phase 2: T107 Memory Map & Core SoC** (Timers, GPIO, MMIO access logging, down-counter verification)
-- [x] **Phase 3: Nokia Peripherals (Display, SPI, Keypad & Flip Sensor)** (SPRD SPI0, GalaxyCore GC9307 240x320 LCD, SPRD KPD matrix, Hall effect flip sensor)
+- [x] **Phase 3: Nokia Peripherals (Dual Displays, SPI, Keypad & Flip Sensor)** (SPRD SPI0 & SPI1, GalaxyCore GC9307 240x320 main LCD, ST7735 120x160 outer sub-screen, SPRD KPD matrix, Hall effect flip sensor)
 - [ ] **Phase 3 (Cont.): Storage & Audio** (SPI NAND flash storage, audio / codec interface)
 - [ ] **Phase 4: Firmware Execution** (FDL1 DDR init, FDL2 flash ops, BOOT0/BOOT1, MOCOR OS)
 - [ ] **Phase 5: OpenFeatureOS Development** (Custom kernel bringup and verification)

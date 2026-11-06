@@ -64,6 +64,8 @@ static void t107_soc_init(Object *obj)
     object_initialize_child(obj, "kpd", &s->kpd, TYPE_SPRD_KPD);
     object_initialize_child(obj, "spi", &s->spi, TYPE_SPRD_SPI);
     object_initialize_child(obj, "lcd", &s->lcd, TYPE_GC9307);
+    object_initialize_child(obj, "spi1", &s->spi1, TYPE_SPRD_SPI);
+    object_initialize_child(obj, "sub_lcd", &s->sub_lcd, TYPE_ST7735);
 }
 
 static void t107_soc_realize(DeviceState *dev, Error **errp)
@@ -140,6 +142,18 @@ static void t107_soc_realize(DeviceState *dev, Error **errp)
     }
     memory_region_add_subregion_overlap(sysmem, T107_SPI0_BASE,
                                         sysbus_mmio_get_region(spi_sbd, 0), 1);
+
+    /* 9. ST7735 Secondary Sub-Display Panel & SPRD SPI1 Controller (mapped at 0x50090000) */
+    if (!qdev_realize(DEVICE(&s->sub_lcd), NULL, errp)) {
+        return;
+    }
+    s->spi1.sub_lcd = &s->sub_lcd;
+    SysBusDevice *spi1_sbd = SYS_BUS_DEVICE(&s->spi1);
+    if (!sysbus_realize(spi1_sbd, errp)) {
+        return;
+    }
+    memory_region_add_subregion_overlap(sysmem, T107_SPI1_BASE,
+                                        sysbus_mmio_get_region(spi1_sbd, 0), 1);
 }
 
 static Property t107_soc_properties[] = {

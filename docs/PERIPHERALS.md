@@ -72,14 +72,35 @@ The T107 SoC provides three high-speed UART interfaces.
 
 ---
 
-## 4. Display Controller & Panel (GalaxyCore GC9307)
+## 4. Display Subsystem (Dual Screens)
 
-The Nokia 2660 Flip primary screen is a 2.8-inch QVGA (240x320) TFT LCD driven by a GalaxyCore GC9307 controller over a 4-line SPI or 8-bit MCU 8080 parallel bus.
+The Nokia 2660 Flip features a dual-display architecture designed for clamshell operation:
+1. **Primary Internal Display**: 2.8-inch QVGA (240x320) LCD for main phone interface when the flip is open.
+2. **Secondary Outer Sub-Display**: 1.77-inch QQVGA (120x160) LCD on the exterior lid for displaying the clock, battery gauge, signal status, and caller ID when closed.
 
-- **SPI0 Base Address**: `0x50080000`
-- **Resolution**: 240 x 320 pixels
-- **Color Depth**: RGB565 (16 bits per pixel)
-- **Outer Secondary Display**: 1.77-inch QQVGA (120x160 pixels)
+### 4.1 Primary Screen (GalaxyCore GC9307)
+- **Controller**: GalaxyCore GC9307
+- **Bus Interface**: Unisoc SPRD SPI0 (Base `0x50080000`)
+- **Resolution**: 240 x 320 pixels (QVGA)
+- **Pixel Format**: RGB565 (16 bits per pixel)
+- **Command Set**: Standard MIPI-DCS (`0x01` SWRESET, `0x11` SLPOUT, `0x29` DISPON, `0x2A` CASET, `0x2B` RASET, `0x2C` RAMWR, `0x3A` COLMOD).
+
+### 4.2 Secondary Outer Sub-Display (Sitronix ST7735 / GC9106)
+- **Controller**: Sitronix ST7735S / GalaxyCore GC9106 compatible
+- **Bus Interface**: Unisoc SPRD SPI1 (Base `0x50090000`)
+- **Resolution**: 120 x 160 pixels (QQVGA, portrait)
+- **Pixel Format**: RGB565 (16 bits per pixel)
+- **Active Trigger**: Controlled by MOCOR OS based on the Hall effect flip sensor state (GPIO Bank 0, Pin 0). When the flip is closed (`Pin 0 = 0`), power and rendering are routed to the outer screen.
+
+### SPI Host Controller Register Map (SPI0: `0x50080000`, SPI1: `0x50090000`)
+| Offset | Register Name | Description | Access | Reset |
+| :--- | :--- | :--- | :--- | :--- |
+| `+0x0000` | `SPRD_SPI_TXD` | Transmit Data Register (Write commands or pixel stream) | W | `0x00000000` |
+| `+0x0004` | `SPRD_SPI_CLKD` | Clock Divider Register | R/W | `0x00000000` |
+| `+0x0008` | `SPRD_SPI_CTL0` | SPI Control Register 0 | R/W | `0x00000000` |
+| `+0x000C` | `SPRD_SPI_CTL1` | SPI Control Register 1 | R/W | `0x00000000` |
+| `+0x0018` | `SPRD_SPI_CTL4` | Data/Command Control (Bit 0: `0` = Command, `1` = Data) | R/W | `0x00000000` |
+| `+0x0030` | `SPRD_SPI_STS1` | Status 1 (Bit 8: TX FIFO Empty, Bit 0: Busy) | R | `0x00000100` |
 
 ---
 

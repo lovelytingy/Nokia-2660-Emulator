@@ -84,6 +84,7 @@ NOKIA_KEYS = {
 }
 
 SPRD_SPI0_BASE   = 0x50080000
+SPRD_SPI1_BASE   = 0x50090000
 SPI_TXD          = 0x0000
 SPI_CLKD         = 0x0004
 SPI_CTL0         = 0x0008
@@ -93,6 +94,9 @@ SPI_STS1         = 0x0030
 
 GC9307_WIDTH     = 240
 GC9307_HEIGHT    = 320
+
+ST7735_WIDTH     = 120
+ST7735_HEIGHT    = 160
 
 PL011_UART_BASE = 0x09000000
 
@@ -143,6 +147,23 @@ class T107UnicornVM:
         self.lcd_pixel_high = None
         self.spi_dc_mode = False  # False = Command, True = Data
 
+        # Sitronix ST7735 Outer Sub-Display State (120x160 RGB565)
+        self.sub_framebuffer = [[0 for _ in range(ST7735_WIDTH)] for _ in range(ST7735_HEIGHT)]
+        self.sub_lcd_sleep = True
+        self.sub_lcd_on = False
+        self.sub_lcd_col_start = 0
+        self.sub_lcd_col_end = ST7735_WIDTH - 1
+        self.sub_lcd_row_start = 0
+        self.sub_lcd_row_end = ST7735_HEIGHT - 1
+        self.sub_lcd_cur_x = 0
+        self.sub_lcd_cur_y = 0
+        self.sub_lcd_state = 'CMD'
+        self.sub_lcd_cmd = 0
+        self.sub_lcd_params = []
+        self.sub_lcd_expected_params = 0
+        self.sub_lcd_pixel_high = None
+        self.sub_spi_dc_mode = False
+
         # Map Memory Regions
         # 1. Internal SRAM
         self.uc.mem_map(SRAM_BASE, SRAM_SIZE)
@@ -151,12 +172,13 @@ class T107UnicornVM:
         self.dram_map_size = 16 * 1024 * 1024
         self.uc.mem_map(DRAM_BASE, self.dram_map_size)
 
-        # 3. Peripheral MMIO space (map pages for SPRD UART, Timers, GPIO, KPD, SPI0, PL011)
+        # 3. Peripheral MMIO space (map pages for SPRD UART, Timers, GPIO, KPD, SPI0, SPI1, PL011)
         self.uc.mem_map(SPRD_UART0_BASE, 0x1000)
         self.uc.mem_map(SPRD_TIMERS_BASE, 0x1000)
         self.uc.mem_map(SPRD_GPIO_BASE, 0x1000)
         self.uc.mem_map(SPRD_KPD_BASE, 0x1000)
         self.uc.mem_map(SPRD_SPI0_BASE, 0x1000)
+        self.uc.mem_map(SPRD_SPI1_BASE, 0x1000)
         self.uc.mem_map(PL011_UART_BASE, 0x1000)
         # Also map page around 0x40001000 to test unmapped traps
         self.uc.mem_map(0x40001000 & ~0xFFF, 0x1000)
@@ -294,7 +316,68 @@ class T107UnicornVM:
                 self.kpd_clk_div = value & 0xFFFFFFFF
             return
 
-        # 6. Catch-all unknown peripheral writes
+        # 6. SPRD SPI1 / Sitronix ST7735 Outer Sub-Display (120x160)
+        if SPRD_SPI1_BASE <= address < (SPRD_SPI1_BASE + 0x1000):
+            offset = address - SPRD_SPI1_BASE
+            if offset == SPI_CTL4:
+                self.sub_spi_dc_mode = bool(value & 0x1)
+            elif offset == SPI_TXD:
+                byte = value & 0xFF
+                if not self.sub_spi_dc_mode:
+                    # Command Mode
+                    self.sub_lcd_cmd = byte
+                    self.sub_lcd_params = []
+                    self.sub_lcd_pixel_high = None
+                    if byte == 0x01: # SWRESET
+                        self.sub_framebuffer = [[0 for _ in range(ST7735_WIDTH)] for _ in range(ST7735_HEIGHT)]
+                        self.sub_lcd_col_start, self.sub_lcd_col_end = 0, ST7735_WIDTH - 1
+                        self.sub_lcd_row_start, self.sub_lcd_row_end = 0, ST7735_HEIGHT - 1
+                    elif byte == 0x11: # SLPOUT
+                        self.sub_lcd_sleep = False
+                    elif byte == 0x29: # DISPON
+                        self.sub_lcd_on = True
+                    elif byte == 0x2A: # CASET
+                        self.sub_lcd_state = 'PARAM'
+                        self.sub_lcd_expected_params = 4
+                    elif byte == 0x2B: # RASET
+                        self.sub_lcd_state = 'PARAM'
+                        self.sub_lcd_expected_params = 4
+                    elif byte == 0x2C: # RAMWR
+                        self.sub_lcd_state = 'PIXELS'
+                        self.sub_lcd_cur_x = self.sub_lcd_col_start
+                        self.sub_lcd_cur_y = self.sub_lcd_row_start
+                    elif byte in (0x3A, 0x36):
+                        self.sub_lcd_state = 'PARAM'
+                        self.sub_lcd_expected_params = 1
+                else:
+                    # Data Mode
+                    if self.sub_lcd_state == 'PARAM':
+                        self.sub_lcd_params.append(byte)
+                        if len(self.sub_lcd_params) >= self.sub_lcd_expected_params:
+                            if self.sub_lcd_cmd == 0x2A:
+                                self.sub_lcd_col_start = min((self.sub_lcd_params[0] << 8) | self.sub_lcd_params[1], ST7735_WIDTH - 1)
+                                self.sub_lcd_col_end   = min((self.sub_lcd_params[2] << 8) | self.sub_lcd_params[3], ST7735_WIDTH - 1)
+                            elif self.sub_lcd_cmd == 0x2B:
+                                self.sub_lcd_row_start = min((self.sub_lcd_params[0] << 8) | self.sub_lcd_params[1], ST7735_HEIGHT - 1)
+                                self.sub_lcd_row_end   = min((self.sub_lcd_params[2] << 8) | self.sub_lcd_params[3], ST7735_HEIGHT - 1)
+                            self.sub_lcd_state = 'CMD'
+                    elif self.sub_lcd_state == 'PIXELS':
+                        if self.sub_lcd_pixel_high is None:
+                            self.sub_lcd_pixel_high = byte
+                        else:
+                            color = (self.sub_lcd_pixel_high << 8) | byte
+                            self.sub_lcd_pixel_high = None
+                            if 0 <= self.sub_lcd_cur_y < ST7735_HEIGHT and 0 <= self.sub_lcd_cur_x < ST7735_WIDTH:
+                                self.sub_framebuffer[self.sub_lcd_cur_y][self.sub_lcd_cur_x] = color
+                            self.sub_lcd_cur_x += 1
+                            if self.sub_lcd_cur_x > self.sub_lcd_col_end:
+                                self.sub_lcd_cur_x = self.sub_lcd_col_start
+                                self.sub_lcd_cur_y += 1
+                                if self.sub_lcd_cur_y > self.sub_lcd_row_end:
+                                    self.sub_lcd_cur_y = self.sub_lcd_row_start
+            return
+
+        # 7. Catch-all unknown peripheral writes
         if 0x40000000 <= address < 0x60000000:
             pc = uc.reg_read(UC_ARM_REG_PC)
             print(f"\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{address:08X} = 0x{value:08X} (size {size}) from PC 0x{pc:08X}")
@@ -368,6 +451,14 @@ class T107UnicornVM:
         # 5. SPRD SPI0 Controller Status
         if SPRD_SPI0_BASE <= address < (SPRD_SPI0_BASE + 0x1000):
             offset = address - SPRD_SPI0_BASE
+            if offset == SPI_STS1:
+                # Bit 8 = 1 (TX FIFO Empty / ready)
+                uc.mem_write(address, (1 << 8).to_bytes(4, 'little'))
+                return
+
+        # 6. SPRD SPI1 Controller Status (Sub-Display)
+        if SPRD_SPI1_BASE <= address < (SPRD_SPI1_BASE + 0x1000):
+            offset = address - SPRD_SPI1_BASE
             if offset == SPI_STS1:
                 # Bit 8 = 1 (TX FIFO Empty / ready)
                 uc.mem_write(address, (1 << 8).to_bytes(4, 'little'))
@@ -458,12 +549,45 @@ class T107UnicornVM:
 
     def render_terminal_preview(self):
         """Renders downscaled 24-bit ANSI truecolor screen preview in terminal."""
-        print("\n=== Nokia 2660 Flip Screen Preview (240x320 QVGA) ===")
+        print("\n=== Nokia 2660 Flip Main Screen Preview (240x320 QVGA) ===")
         # 60 cols x 40 rows
         for y in range(0, GC9307_HEIGHT, 8):
             line = ""
             for x in range(0, GC9307_WIDTH, 4):
                 c = self.framebuffer[y][x]
+                r = ((c >> 11) & 0x1F) * 255 // 31
+                g = ((c >> 5) & 0x3F) * 255 // 63
+                b = (c & 0x1F) * 255 // 31
+                line += f"\033[48;2;{r};{g};{b}m \033[0m"
+            print(line)
+        print("=" * 60)
+
+    def export_sub_ppm(self, file_path):
+        """Exports 120x160 secondary sub-display framebuffer as standard PPM image."""
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        with open(file_path, "wb") as f:
+            header = f"P6\n{ST7735_WIDTH} {ST7735_HEIGHT}\n255\n"
+            f.write(header.encode('ascii'))
+            for y in range(ST7735_HEIGHT):
+                row = bytearray()
+                for x in range(ST7735_WIDTH):
+                    c = self.sub_framebuffer[y][x]
+                    # Convert RGB565 to RGB888
+                    r = ((c >> 11) & 0x1F) * 255 // 31
+                    g = ((c >> 5) & 0x3F) * 255 // 63
+                    b = (c & 0x1F) * 255 // 31
+                    row.extend([r, g, b])
+                f.write(row)
+        print(f"[N2660Emu Sub-Display] Saved outer screen image to '{file_path}' ({ST7735_WIDTH}x{ST7735_HEIGHT})")
+
+    def render_sub_terminal_preview(self):
+        """Renders downscaled 24-bit ANSI truecolor preview of outer sub-display."""
+        print("\n=== Nokia 2660 Flip Outer Sub-Screen Preview (120x160 QQVGA) ===")
+        # 30 cols x 20 rows
+        for y in range(0, ST7735_HEIGHT, 8):
+            line = ""
+            for x in range(0, ST7735_WIDTH, 4):
+                c = self.sub_framebuffer[y][x]
                 r = ((c >> 11) & 0x1F) * 255 // 31
                 g = ((c >> 5) & 0x3F) * 255 // 63
                 b = (c & 0x1F) * 255 // 31
@@ -479,8 +603,10 @@ def main():
     parser.add_argument("--trace", action="store_true", help="Enable instruction tracing")
     parser.add_argument("--max-insns", type=int, default=0, help="Maximum instructions to execute")
     parser.add_argument("--timeout", type=int, default=5, help="Timeout in seconds")
-    parser.add_argument("--screen-dump", type=str, default=None, help="Path to dump framebuffer image (.ppm)")
-    parser.add_argument("--preview-screen", action="store_true", help="Render ANSI truecolor screen preview in terminal")
+    parser.add_argument("--screen-dump", type=str, default=None, help="Path to dump main framebuffer image (.ppm)")
+    parser.add_argument("--sub-screen-dump", type=str, default=None, help="Path to dump outer sub-framebuffer image (.ppm)")
+    parser.add_argument("--preview-screen", action="store_true", help="Render ANSI truecolor main screen in terminal")
+    parser.add_argument("--preview-sub-screen", action="store_true", help="Render ANSI truecolor outer sub-screen in terminal")
     parser.add_argument("--key", type=str, action="append", help="Inject key press (e.g. --key 5 or --key ok)")
     parser.add_argument("--flip", choices=["open", "closed"], default="open", help="Hall effect flip sensor initial state (default: open)")
     args = parser.parse_args()
@@ -502,8 +628,14 @@ def main():
     if args.screen_dump:
         vm.export_ppm(args.screen_dump)
 
+    if args.sub_screen_dump:
+        vm.export_sub_ppm(args.sub_screen_dump)
+
     if args.preview_screen:
         vm.render_terminal_preview()
+
+    if args.preview_sub_screen:
+        vm.render_sub_terminal_preview()
 
     sys.exit(0 if success else 1)
 

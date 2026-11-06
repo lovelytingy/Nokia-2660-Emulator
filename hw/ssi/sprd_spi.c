@@ -68,6 +68,14 @@ static void sprd_spi_write(void *opaque, hwaddr offset, uint64_t val, unsigned s
                 gc9307_write_cmd(s->lcd, byte);
             }
         }
+        if (s->sub_lcd) {
+            uint8_t byte = (uint8_t)(val & 0xFF);
+            if (s->dc_data_mode) {
+                st7735_write_data(s->sub_lcd, byte);
+            } else {
+                st7735_write_cmd(s->sub_lcd, byte);
+            }
+        }
         break;
 
     case SPRD_SPI_CLKD:

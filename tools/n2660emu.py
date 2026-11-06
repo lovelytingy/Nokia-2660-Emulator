@@ -15,7 +15,7 @@ import shutil
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open"):
+def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dump=None, preview_screen=False, keys=None, flip="open", sub_screen_dump=None, preview_sub_screen=False):
     script_path = os.path.join(PROJECT_ROOT, "tools", "unicorn_runner.py")
     cmd = [
         sys.executable,
@@ -29,8 +29,12 @@ def run_unicorn_engine(bin_path, entry_addr, trace=False, timeout=10, screen_dum
         cmd.append("--trace")
     if screen_dump:
         cmd.extend(["--screen-dump", screen_dump])
+    if sub_screen_dump:
+        cmd.extend(["--sub-screen-dump", sub_screen_dump])
     if preview_screen:
         cmd.append("--preview-screen")
+    if preview_sub_screen:
+        cmd.append("--preview-sub-screen")
     if keys:
         for k in keys:
             cmd.extend(["--key", k])
@@ -101,8 +105,10 @@ Examples:
     parser.add_argument("--gdb", action="store_true", help="Start GDB stub server on port 1234")
     parser.add_argument("-S", "--wait-gdb", action="store_true", help="Freeze CPU at startup and wait for GDB connection")
     parser.add_argument("--timeout", type=int, default=10, help="Execution timeout in seconds")
-    parser.add_argument("--screen-dump", type=str, default=None, help="Dump display framebuffer to PPM image")
-    parser.add_argument("--preview-screen", action="store_true", help="Render ANSI truecolor screen in terminal")
+    parser.add_argument("--screen-dump", type=str, default=None, help="Dump main display framebuffer to PPM image")
+    parser.add_argument("--sub-screen-dump", type=str, default=None, help="Dump outer sub-display framebuffer to PPM image")
+    parser.add_argument("--preview-screen", action="store_true", help="Render ANSI truecolor main screen in terminal")
+    parser.add_argument("--preview-sub-screen", action="store_true", help="Render ANSI truecolor outer sub-screen in terminal")
     parser.add_argument("--key", type=str, action="append", help="Inject key press (e.g. --key 5 or --key ok)")
     parser.add_argument("--flip", choices=["open", "closed"], default="open", help="Hall effect flip sensor initial state (default: open)")
 
@@ -124,7 +130,8 @@ Examples:
     if engine == "unicorn":
         ret = run_unicorn_engine(fw_path, args.entry, trace=args.trace, timeout=args.timeout,
                                  screen_dump=args.screen_dump, preview_screen=args.preview_screen,
-                                 keys=args.key, flip=args.flip)
+                                 keys=args.key, flip=args.flip,
+                                 sub_screen_dump=args.sub_screen_dump, preview_sub_screen=args.preview_sub_screen)
     else:
         machine = "virt" if engine == "qemu-virt" else "nokia-2660"
         ret = run_qemu_system(fw_path, machine=machine, gdb=args.gdb, wait_gdb=args.wait_gdb, extra_args=unknown)

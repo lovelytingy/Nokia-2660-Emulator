@@ -29,6 +29,7 @@ from tools.unicorn_runner import (
     SPRD_GPIO_BASE, GPIO_DATA, GPIO_DIR,
     SPRD_KPD_BASE, KPD_CTRL, KPD_INT_EN, KPD_INT_RAW, KPD_STATUS0, KPD_STATUS1,
     SPRD_SPI0_BASE, GC9307_WIDTH, GC9307_HEIGHT,
+    SPRD_SPI1_BASE, ST7735_WIDTH, ST7735_HEIGHT,
     T107UnicornVM
 )
 
@@ -119,6 +120,25 @@ class TestN2660EmuMemoryMap(unittest.TestCase):
         self.assertEqual(vm.framebuffer[50][195], 0x001F)  # Blue
         self.assertEqual(vm.framebuffer[50][225], 0x0000)  # Black
         self.assertEqual(vm.framebuffer[260][120], 0x0215) # Nokia Blue footer
+
+    def test_sprd_spi1_and_st7735_sub_display(self):
+        self.assertEqual(SPRD_SPI1_BASE, 0x50090000)
+        self.assertEqual(ST7735_WIDTH, 120)
+        self.assertEqual(ST7735_HEIGHT, 160)
+
+        bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")
+        vm = T107UnicornVM(trace_instructions=False)
+        vm.load_binary(bin_path, DRAM_BASE)
+        success = vm.run(entry_point=DRAM_BASE, timeout_sec=5)
+        self.assertTrue(success)
+
+        # Verify ST7735 outer screen pixel values
+        self.assertEqual(vm.sub_framebuffer[10][60], 0x001F)   # Top status bar (Blue)
+        self.assertEqual(vm.sub_framebuffer[10][12], 0x07E0)   # Signal indicator (Green)
+        self.assertEqual(vm.sub_framebuffer[10][105], 0xFFE0)  # Battery indicator (Yellow)
+        self.assertEqual(vm.sub_framebuffer[70][60], 0x07FF)   # Digital clock box (Cyan)
+        self.assertEqual(vm.sub_framebuffer[120][60], 0x0215)  # Notification banner (Nokia Blue)
+        self.assertEqual(vm.sub_framebuffer[158][60], 0xFFFF)  # Bottom accent bar (White)
 
     def test_baremetal_payload_execution(self):
         bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")

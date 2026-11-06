@@ -16,6 +16,7 @@
 #include "hw/gpio/sprd_gpio.h"
 #include "hw/ssi/sprd_spi.h"
 #include "hw/display/gc9307.h"
+#include "hw/display/st7735.h"
 #include "hw/input/sprd_kpd.h"
 #include "hw/boards.h"
 
@@ -42,6 +43,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Nokia2660MachineState, NOKIA_2660_MACHINE)
 #define T107_GPIO_BASE            0x50040000
 #define T107_KPD_BASE             0x50060000        /* Keypad Matrix Controller */
 #define T107_SPI0_BASE            0x50080000        /* GC9307 Display interface */
+#define T107_SPI1_BASE            0x50090000        /* ST7735 Sub-Display interface */
 
 #define T107_NUM_UARTS            3
 
@@ -62,6 +64,8 @@ struct T107SocState {
     SprdKpdState kpd;
     SprdSPIState spi;
     GC9307State lcd;
+    SprdSPIState spi1;
+    ST7735State sub_lcd;
 };
 
 struct Nokia2660MachineState {

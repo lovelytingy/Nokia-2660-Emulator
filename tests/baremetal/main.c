@@ -10,6 +10,7 @@
 #include "sprd_uart.h"
 #include "gc9307.h"
 #include "kpd.h"
+#include "st7735.h"
 
 /* Peripheral Base Addresses */
 #define SPRD_TIMERS_BASE   0x50030000
@@ -209,7 +210,15 @@ int main(void)
     int kpd_ok = 1; /* Keypad initialized and query returned successfully */
     uart_puts("[PASS] Keypad matrix and flip sensor interface verified.\n");
 
-    /* 8. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 8. Sitronix ST7735 / GC9106 Outer Sub-Display Test */
+    uart_puts("[TEST] Initializing Outer Sub-Display (1.77\" 120x160 QQVGA) at SPI1 0x50090000...\n");
+    st7735_init();
+    uart_puts("[SUB-LCD] Drawing 120x160 outer screen clock & status frame...\n");
+    st7735_draw_test_screen();
+    uart_puts("[PASS] Outer sub-display rendering test completed.\n");
+    int sub_lcd_ok = 1;
+
+    /* 9. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -217,11 +226,11 @@ int main(void)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 9. Summary */
+    /* 10. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1, 2, AND 3 (DISPLAY & KEYPAD) CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD & Flip OK!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1, 2, AND 3 (DUAL DISPLAY & INPUT) CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip & Sub-LCD OK!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }

@@ -19,6 +19,9 @@ trace: firmware
 screen: firmware
 	./bin/n2660emu tests/baremetal/test_firmware.bin --engine unicorn --screen-dump build/screen.ppm --preview-screen
 
+sub-screen: firmware
+	./bin/n2660emu tests/baremetal/test_firmware.bin --engine unicorn --sub-screen-dump build/sub_screen.ppm --preview-sub-screen
+
 disasm: firmware
 	./tools/disasm.py tests/baremetal/test_firmware.bin --base 0x80000000 -n 40
 
