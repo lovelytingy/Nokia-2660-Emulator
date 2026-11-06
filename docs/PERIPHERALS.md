@@ -219,5 +219,50 @@ The Nokia 2660 Flip TA-1480 utilizes a 128 MB (1 Gb) high-speed SPI NAND flash (
 | `+0x0038` | `TONE_DUR` | Tone Duration in milliseconds (e.g. 50 ms for short click) | R/W | `0x00000032` |
 | `+0x003C` | `TONE_VOL` | Tone Volume / Amplitude (0–100%) | R/W | `0x00000050` |
 
+---
+
+## 8. SPRD Interrupt Controller (INTC)
+
+- **Base Address**: `0x50050000`
+- **Interrupt Lines**: 32 prioritized hardware and software lines
+- **Core Connections**: Connected to ARM Cortex-A7 `nIRQ` and `nFIQ` exception inputs
+- **Modes**: Programmable line routing between standard IRQ and high-priority FIQ via `INTC_TYPE`
+
+### Register Map
+| Offset | Register Name | Description | Access | Reset |
+| :--- | :--- | :--- | :--- | :--- |
+| `+0x0000` | `INTC_IRQ_RAW_STS` | Raw Interrupt Status (All active peripheral + soft lines) | R | `0x00000000` |
+| `+0x0004` | `INTC_IRQ_MASK_STS` | Masked Interrupt Status (`RAW & EN & ~TYPE`) | R | `0x00000000` |
+| `+0x0008` | `INTC_IRQ_EN` | Interrupt Enable / Set Register | R/W | `0x00000000` |
+| `+0x000C` | `INTC_IRQ_EN_CLR` | Interrupt Enable Clear Register (Write 1 to clear bit) | W | `0x00000000` |
+| `+0x0010` | `INTC_IRQ_SOFT` | Software Interrupt Trigger (Write 1 to assert) | R/W | `0x00000000` |
+| `+0x0014` | `INTC_IRQ_SOFT_CLR` | Software Interrupt Clear (Write 1 to deassert) | W | `0x00000000` |
+| `+0x0018` | `INTC_IRQ_CLR` | Hardware Edge Interrupt Clear (Write 1 to acknowledge) | W | `0x00000000` |
+| `+0x001C` | `INTC_FIQ_RAW_STS` | FIQ Raw Interrupt Status | R | `0x00000000` |
+| `+0x0020` | `INTC_FIQ_MASK_STS` | FIQ Masked Interrupt Status (`RAW & FIQ_EN & TYPE`) | R | `0x00000000` |
+| `+0x0024` | `INTC_FIQ_EN` | FIQ Enable Register | R/W | `0x00000000` |
+| `+0x0028` | `INTC_FIQ_EN_CLR` | FIQ Enable Clear Register | W | `0x00000000` |
+| `+0x002C` | `INTC_FIQ_SOFT` | FIQ Software Interrupt Trigger | R/W | `0x00000000` |
+| `+0x0030` | `INTC_FIQ_SOFT_CLR` | FIQ Software Interrupt Clear | W | `0x00000000` |
+| `+0x0034` | `INTC_TYPE` | Routing Selector (`0` = IRQ, `1` = FIQ for bits 0–31) | R/W | `0x00000000` |
+
+### Hardware IRQ Channel Assignments
+| IRQ Line | Source Peripheral | Trigger Condition |
+| :---: | :--- | :--- |
+| **0** | SPRD System Timer | Counter underflow / tick period match |
+| **1** | SPRD UART0 | RX FIFO watermark or TX buffer empty (Console / BSL) |
+| **2** | SPRD UART1 | Secondary serial interface events |
+| **3** | SPRD UART2 | Modem / Bluetooth events |
+| **4** | SPRD GPIO | Bank 0 Pin 0 flip sensor or GPIO edge trigger |
+| **5** | SPRD Keypad (KPD) | Matrix key press / release event |
+| **6** | SPRD SPI0 | Primary GC9307 LCD TX completion |
+| **7** | SPRD SPI1 | Secondary ST7735 Sub-LCD TX completion |
+| **8** | SPRD SFC | SPI NAND flash command / page transfer done |
+| **9** | SPRD Audio | Audio DAC FIFO underrun or tone completion |
+| **10** | Watchdog Timer | Watchdog pre-timeout interrupt |
+| **11** | DMA Controller | Channel transfer complete |
+| **15** | Software Test IRQ | User / OS IPC software interrupt |
+
+
 
 

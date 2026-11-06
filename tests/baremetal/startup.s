@@ -30,7 +30,17 @@ Reset_Handler:
     /* Set CPU mode to Supervisor (SVC) and disable IRQ/FIQ */
     cpsid if, #0x13
 
-    /* Set up Stack Pointer */
+    /* Set Vector Base Address Register (VBAR) to _start */
+    ldr r0, =_start
+    mcr p15, 0, r0, c12, c0, 0
+    isb
+
+    /* Set up IRQ mode stack pointer */
+    cps #0x12
+    ldr sp, =_irq_stack_top
+
+    /* Switch back to Supervisor mode and set up SVC stack */
+    cps #0x13
     ldr sp, =_stack_top
 
     /* Preserve boot/kernel handoff registers (r0, r1, r2) */
@@ -80,8 +90,14 @@ Prefetch_Abort:
 Data_Abort:
     b .
 
+    .global IRQ_Handler
+    .type IRQ_Handler, %function
 IRQ_Handler:
-    b .
+    sub lr, lr, #4
+    push {r0-r3, r12, lr}
+    bl c_irq_handler
+    pop {r0-r3, r12, lr}
+    movs pc, lr
 
 FIQ_Handler:
     b .

@@ -11,7 +11,7 @@ CFLAGS  := -mcpu=cortex-a7 -marm -mfpu=vfpv4 -mfloat-abi=hard \
            -O2 -Wall -Wextra -ffreestanding -nostdlib -I.
 LDFLAGS := -T linker.ld -nostdlib
 
-SRCS_C  := main.c sprd_uart.c gc9307.c kpd.c st7735.c sfc.c bsl.c audio.c bootrom.c atags.c
+SRCS_C  := main.c sprd_uart.c gc9307.c kpd.c st7735.c sfc.c bsl.c audio.c bootrom.c atags.c intc.c
 SRCS_S  := startup.s
 
 OBJS    := $(SRCS_C:.c=.o) $(SRCS_S:.s=.o)

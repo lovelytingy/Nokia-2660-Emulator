@@ -16,6 +16,7 @@
 #include "audio.h"
 #include "bootrom.h"
 #include "atags.h"
+#include "intc.h"
 
 /* Peripheral Base Addresses */
 #define SPRD_TIMERS_BASE   0x50030000
@@ -92,6 +93,19 @@ static int test_memory_region(const char *name, uintptr_t base_addr, size_t word
     uart_puts(name);
     uart_puts(" verified successfully.\n");
     return 1;
+}
+
+static volatile int g_soft_irq_fired = 0;
+static void test_soft_irq_handler(void)
+{
+    g_soft_irq_fired++;
+}
+
+static volatile int g_kpd_irq_fired = 0;
+static void test_kpd_irq_handler(void)
+{
+    g_kpd_irq_fired++;
+    kpd_clear_interrupt();
 }
 
 int main(uint32_t boot_zero, uint32_t board_id, uint32_t atags_addr)
@@ -537,7 +551,70 @@ int main(uint32_t boot_zero, uint32_t board_id, uint32_t atags_addr)
         uart_puts("[FAIL] ATAGS verification failed.\n");
     }
 
-    /* 14. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 14. SPRD Interrupt Controller (INTC) & Hardware IRQ Test */
+    uart_puts("[TEST] Testing SPRD Interrupt Controller (INTC) at 0x50050000...\n");
+    int intc_ok = 1;
+
+    intc_init();
+
+    if (intc_get_raw_status() != 0 || intc_get_masked_status() != 0) {
+        uart_puts("[FAIL] INTC initial status is not zero.\n");
+        intc_ok = 0;
+    }
+
+    /* Sub-test A: Software IRQ registration and execution */
+    g_soft_irq_fired = 0;
+    intc_register_handler(SPRD_IRQ_TEST_SOFT, test_soft_irq_handler);
+    intc_enable_irq(SPRD_IRQ_TEST_SOFT);
+
+    cpu_enable_irqs();
+    intc_trigger_soft_irq(SPRD_IRQ_TEST_SOFT);
+
+    /* NOP sequence to allow IRQ exception dispatch and return */
+    __asm__ volatile("nop; nop; nop; nop;");
+
+    if (g_soft_irq_fired != 1) {
+        uart_puts("[FAIL] Software IRQ 15 handler did not fire.\n");
+        intc_ok = 0;
+    } else {
+        uart_puts("[INTC] Software IRQ 15 successfully executed (Counter: 1)\n");
+    }
+
+    cpu_disable_irqs();
+    intc_disable_irq(SPRD_IRQ_TEST_SOFT);
+
+    /* Sub-test B: Hardware Keypad Interrupt Test */
+    g_kpd_irq_fired = 0;
+    intc_register_handler(SPRD_IRQ_KPD, test_kpd_irq_handler);
+    intc_enable_irq(SPRD_IRQ_KPD);
+    kpd_enable_interrupt();
+
+    /* Trigger KPD interrupt via software trigger */
+    REG_INTC_IRQ_SOFT = (1U << SPRD_IRQ_KPD);
+    cpu_enable_irqs();
+    __asm__ volatile("nop; nop; nop; nop;");
+    cpu_disable_irqs();
+    intc_disable_irq(SPRD_IRQ_KPD);
+
+    if (g_kpd_irq_fired != 1) {
+        uart_puts("[FAIL] Keypad IRQ handler did not fire.\n");
+        intc_ok = 0;
+    } else {
+        uart_puts("[INTC] Keypad IRQ 5 successfully executed (Counter: 1)\n");
+    }
+
+    uint32_t final_mask = intc_get_masked_status();
+    uart_puts("[INTC] Final Masked Status: ");
+    uart_puthex32(final_mask);
+    uart_puts("\n");
+
+    if (intc_ok && final_mask == 0) {
+        uart_puts("[PASS] SPRD Interrupt Controller, software IRQs & hardware IRQ vectors verified.\n");
+    } else {
+        uart_puts("[FAIL] INTC verification failed.\n");
+    }
+
+    /* 15. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -545,11 +622,11 @@ int main(uint32_t boot_zero, uint32_t board_id, uint32_t atags_addr)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 15. Summary */
+    /* 16. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok && audio_ok && bootrom_ok && atags_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO, BOOTROM & ATAGS) CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL, Audio, BootROM & ATAGS OK!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok && kpd_ok && sub_lcd_ok && flash_ok && bsl_ok && audio_ok && bootrom_ok && atags_ok && intc_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO, BOOTROM, ATAGS & INTC) CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, INTC, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL, Audio, BootROM & ATAGS OK!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }

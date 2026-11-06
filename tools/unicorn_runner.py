@@ -59,7 +59,7 @@ from unicorn import (
 from unicorn.arm_const import (
     UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
     UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_SP, UC_ARM_REG_LR,
-    UC_ARM_REG_PC, UC_ARM_REG_CPSR
+    UC_ARM_REG_PC, UC_ARM_REG_CPSR, UC_ARM_REG_SPSR
 )
 import capstone
 
@@ -92,6 +92,35 @@ GPIO_DATA        = 0x0000
 GPIO_DMSK        = 0x0004
 GPIO_DIR         = 0x0008
 GPIO_INEN        = 0x0028
+
+SPRD_INTC_BASE       = 0x50050000
+INTC_IRQ_RAW_STS     = 0x0000
+INTC_IRQ_MASK_STS    = 0x0004
+INTC_IRQ_EN          = 0x0008
+INTC_IRQ_EN_CLR      = 0x000C
+INTC_IRQ_SOFT        = 0x0010
+INTC_IRQ_SOFT_CLR    = 0x0014
+INTC_IRQ_CLR         = 0x0018
+INTC_FIQ_RAW_STS     = 0x001C
+INTC_FIQ_MASK_STS    = 0x0020
+INTC_FIQ_EN          = 0x0024
+INTC_FIQ_EN_CLR      = 0x0028
+INTC_FIQ_SOFT        = 0x002C
+INTC_FIQ_SOFT_CLR    = 0x0030
+INTC_TYPE            = 0x0034
+
+SPRD_IRQ_TIMER       = 0
+SPRD_IRQ_UART0       = 1
+SPRD_IRQ_UART1       = 2
+SPRD_IRQ_UART2       = 3
+SPRD_IRQ_GPIO        = 4
+SPRD_IRQ_KPD         = 5
+SPRD_IRQ_SPI0        = 6
+SPRD_IRQ_SPI1        = 7
+SPRD_IRQ_SFC         = 8
+SPRD_IRQ_AUDIO       = 9
+SPRD_IRQ_WDG         = 10
+SPRD_IRQ_DMA         = 11
 
 SPRD_KPD_BASE    = 0x50060000
 KPD_CTRL         = 0x0000
@@ -285,6 +314,14 @@ class T107UnicornVM:
         self.audio_tx_samples = []
         self.audio_tone_events = []
 
+        # SPRD Interrupt Controller (INTC) State (0x50050000)
+        self.intc_raw_sts = 0
+        self.intc_irq_en = 0
+        self.intc_irq_soft = 0
+        self.intc_fiq_en = 0
+        self.intc_fiq_soft = 0
+        self.intc_type = 0
+
         # Map Memory Regions
         # 1. Internal SRAM
         self.uc.mem_map(SRAM_BASE, SRAM_SIZE)
@@ -297,6 +334,7 @@ class T107UnicornVM:
         self.uc.mem_map(SPRD_UART0_BASE, 0x1000)
         self.uc.mem_map(SPRD_TIMERS_BASE, 0x1000)
         self.uc.mem_map(SPRD_GPIO_BASE, 0x1000)
+        self.uc.mem_map(SPRD_INTC_BASE, 0x1000)
         self.uc.mem_map(SPRD_KPD_BASE, 0x1000)
         self.uc.mem_map(SPRD_SPI0_BASE, 0x1000)
         self.uc.mem_map(SPRD_SPI1_BASE, 0x1000)
@@ -318,6 +356,34 @@ class T107UnicornVM:
 
     def _hook_code(self, uc, address, size, user_data):
         self.instruction_count += 1
+
+        # Check if hardware timer expired and generates IRQ
+        if self.timer_ctl & 2:
+            elapsed = (self.instruction_count - self.timer_start_insn) * 4
+            if elapsed >= self.timer_load:
+                self.timer_int |= 0x02
+                if self.timer_int & 0x01:
+                    self.intc_assert_irq(SPRD_IRQ_TIMER)
+                if self.timer_ctl & 1:  # Periodic
+                    self.timer_start_insn = self.instruction_count
+
+        # Check for pending IRQ to deliver
+        cpsr = uc.reg_read(UC_ARM_REG_CPSR)
+        if (cpsr & 0x80) == 0:  # IRQ unmasked in CPU CPSR (I bit = 0)
+            irq_lines = (self.intc_raw_sts | self.intc_irq_soft) & (~self.intc_type & 0xFFFFFFFF)
+            pending = irq_lines & self.intc_irq_en
+            if pending != 0:
+                vector_base = getattr(self, 'vector_base', 0x80000000)
+                svc_cpsr = cpsr
+                irq_cpsr = (svc_cpsr & ~0x1F) | 0x12 | 0x80
+                uc.reg_write(UC_ARM_REG_CPSR, irq_cpsr)
+                uc.reg_write(UC_ARM_REG_SPSR, svc_cpsr)
+                uc.reg_write(UC_ARM_REG_LR, address + 4)
+                uc.reg_write(UC_ARM_REG_PC, vector_base + 0x18)
+                if self.trace_instructions:
+                    print(f"[VM INTC] IRQ Exception Dispatched to 0x{vector_base + 0x18:08X} (ret PC=0x{address:08X}, pending=0x{pending:08X})")
+                return
+
         if self.trace_instructions:
             code = uc.mem_read(address, size)
             for insn in self.cs.disasm(code, address):
@@ -354,7 +420,10 @@ class T107UnicornVM:
                 self.timer_ctl = value & 0xFFFFFFFF
                 self.timer_start_insn = self.instruction_count
             elif offset == TIMER_INT:
-                self.timer_int = value & 0xFFFFFFFF
+                self.timer_int = value & 0x07
+                if value & 0x08:  # Write 1 to clear
+                    self.timer_int &= ~0x02
+                    self.intc_deassert_irq(SPRD_IRQ_TIMER)
             return
 
         # 4. SPRD GPIO
@@ -366,6 +435,31 @@ class T107UnicornVM:
                 self.gpio_dir = value & 0xFFFFFFFF
             elif offset == GPIO_INEN:
                 self.gpio_inen = value & 0xFFFFFFFF
+            return
+
+        # 4b. SPRD Interrupt Controller (INTC) (0x50050000)
+        if SPRD_INTC_BASE <= address < (SPRD_INTC_BASE + 0x1000):
+            offset = address - SPRD_INTC_BASE
+            if offset == INTC_IRQ_EN:
+                self.intc_irq_en |= (value & 0xFFFFFFFF)
+            elif offset == INTC_IRQ_EN_CLR:
+                self.intc_irq_en &= ~(value & 0xFFFFFFFF)
+            elif offset == INTC_IRQ_SOFT:
+                self.intc_irq_soft |= (value & 0xFFFFFFFF)
+            elif offset == INTC_IRQ_SOFT_CLR:
+                self.intc_irq_soft &= ~(value & 0xFFFFFFFF)
+            elif offset == INTC_IRQ_CLR:
+                self.intc_raw_sts &= ~(value & 0xFFFFFFFF)
+            elif offset == INTC_FIQ_EN:
+                self.intc_fiq_en |= (value & 0xFFFFFFFF)
+            elif offset == INTC_FIQ_EN_CLR:
+                self.intc_fiq_en &= ~(value & 0xFFFFFFFF)
+            elif offset == INTC_FIQ_SOFT:
+                self.intc_fiq_soft |= (value & 0xFFFFFFFF)
+            elif offset == INTC_FIQ_SOFT_CLR:
+                self.intc_fiq_soft &= ~(value & 0xFFFFFFFF)
+            elif offset == INTC_TYPE:
+                self.intc_type = value & 0xFFFFFFFF
             return
 
         # 5. SPRD SPI0 / GalaxyCore GC9307 Display
@@ -436,9 +530,15 @@ class T107UnicornVM:
                 self.kpd_ctrl = value & 0xFFFFFFFF
             elif offset == KPD_INT_EN:
                 self.kpd_int_en = value & 0xFFFFFFFF
+                if self.kpd_int_raw & self.kpd_int_en:
+                    self.intc_assert_irq(SPRD_IRQ_KPD)
+                else:
+                    self.intc_deassert_irq(SPRD_IRQ_KPD)
             elif offset == KPD_INT_CLR:
                 if value & 0x1:
                     self.kpd_int_raw &= ~0x1
+                if not (self.kpd_int_raw & self.kpd_int_en):
+                    self.intc_deassert_irq(SPRD_IRQ_KPD)
             elif offset == KPD_POLARITY:
                 self.kpd_polarity = value & 0xFFFFFFFF
             elif offset == KPD_CLK_DIV:
@@ -682,6 +782,34 @@ class T107UnicornVM:
                 uc.mem_write(address, (self.gpio_inen & 0xFFFFFFFF).to_bytes(4, 'little'))
                 return
 
+        # 3b. SPRD Interrupt Controller (INTC) (0x50050000)
+        if SPRD_INTC_BASE <= address < (SPRD_INTC_BASE + 0x1000):
+            offset = address - SPRD_INTC_BASE
+            if offset == INTC_IRQ_RAW_STS:
+                val = (self.intc_raw_sts | self.intc_irq_soft) & (~self.intc_type & 0xFFFFFFFF)
+            elif offset == INTC_IRQ_MASK_STS:
+                irq_lines = (self.intc_raw_sts | self.intc_irq_soft) & (~self.intc_type & 0xFFFFFFFF)
+                val = irq_lines & self.intc_irq_en
+            elif offset == INTC_IRQ_EN:
+                val = self.intc_irq_en
+            elif offset == INTC_IRQ_SOFT:
+                val = self.intc_irq_soft
+            elif offset == INTC_FIQ_RAW_STS:
+                val = (self.intc_raw_sts | self.intc_fiq_soft) & self.intc_type
+            elif offset == INTC_FIQ_MASK_STS:
+                fiq_lines = (self.intc_raw_sts | self.intc_fiq_soft) & self.intc_type
+                val = fiq_lines & self.intc_fiq_en
+            elif offset == INTC_FIQ_EN:
+                val = self.intc_fiq_en
+            elif offset == INTC_FIQ_SOFT:
+                val = self.intc_fiq_soft
+            elif offset == INTC_TYPE:
+                val = self.intc_type
+            else:
+                val = 0
+            uc.mem_write(address, (val & 0xFFFFFFFF).to_bytes(4, 'little'))
+            return
+
         # 4. SPRD Keypad Matrix Controller
         if SPRD_KPD_BASE <= address < (SPRD_KPD_BASE + 0x1000):
             offset = address - SPRD_KPD_BASE
@@ -799,8 +927,12 @@ class T107UnicornVM:
     def load_binary(self, binary_path, load_addr):
         with open(binary_path, "rb") as f:
             data = f.read()
+        self.vector_base = load_addr
         print(f"[VM] Loading binary '{binary_path}' ({len(data)} bytes) to address 0x{load_addr:08X}...")
         self.uc.mem_write(load_addr, data)
+        # Mirror vectors (first 64 bytes) to SRAM 0x00000000 for low vector compatibility
+        if len(data) >= 64:
+            self.uc.mem_write(SRAM_BASE, data[:64])
 
     def load_fdl1(self, file_path, load_addr=0x00006200, simulate_bsl=False):
         """Loads FDL1 (First Downloader) into SRAM at load_addr."""
@@ -886,6 +1018,18 @@ class T107UnicornVM:
         print(f"[VM BootROM] Staged BOOT0 ({len(data)} bytes) into SPI NAND Block {block_index} (Flash Offset 0x{offset:08X})")
         return len(data)
 
+    def intc_get_irq_masked_status(self):
+        irq_lines = (self.intc_raw_sts | self.intc_irq_soft) & (~self.intc_type & 0xFFFFFFFF)
+        return irq_lines & self.intc_irq_en
+
+    def intc_assert_irq(self, irq_num):
+        if irq_num < 32:
+            self.intc_raw_sts |= (1 << irq_num)
+
+    def intc_deassert_irq(self, irq_num):
+        if irq_num < 32:
+            self.intc_raw_sts &= ~(1 << irq_num)
+
     def setup_atags(self, ram_base=0x80000000, ram_size=48*1024*1024,
                     cmdline=DEFAULT_CMDLINE, atags_addr=DEFAULT_ATAGS_ADDR, board_id=DEFAULT_BOARD_ID):
         """Constructs and stages standard ARM ATAGS in DRAM, setting up r0, r1, r2 registers."""
@@ -937,6 +1081,8 @@ class T107UnicornVM:
 
         if pressed:
             self.kpd_int_raw |= 0x1
+            if self.kpd_int_en & 0x1:
+                self.intc_assert_irq(SPRD_IRQ_KPD)
 
     def set_flip_state(self, is_open: bool):
         """Set Hall effect flip sensor state (GPIO Bank 0 Pin 0: 1=Open, 0=Closed)."""

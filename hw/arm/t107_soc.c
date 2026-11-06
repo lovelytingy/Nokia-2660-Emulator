@@ -61,6 +61,7 @@ static void t107_soc_init(Object *obj)
 
     object_initialize_child(obj, "timer", &s->timer, TYPE_SPRD_TIMER);
     object_initialize_child(obj, "gpio", &s->gpio, TYPE_SPRD_GPIO);
+    object_initialize_child(obj, "intc", &s->intc, TYPE_SPRD_INTC);
     object_initialize_child(obj, "kpd", &s->kpd, TYPE_SPRD_KPD);
     object_initialize_child(obj, "spi", &s->spi, TYPE_SPRD_SPI);
     object_initialize_child(obj, "lcd", &s->lcd, TYPE_GC9307);
@@ -128,6 +129,16 @@ static void t107_soc_realize(DeviceState *dev, Error **errp)
     }
     memory_region_add_subregion_overlap(sysmem, T107_GPIO_BASE,
                                         sysbus_mmio_get_region(gpio_sbd, 0), 1);
+
+    /* 6b. Interrupt Controller (mapped at 0x50050000) */
+    SysBusDevice *intc_sbd = SYS_BUS_DEVICE(&s->intc);
+    if (!sysbus_realize(intc_sbd, errp)) {
+        return;
+    }
+    memory_region_add_subregion_overlap(sysmem, T107_INTC_BASE,
+                                        sysbus_mmio_get_region(intc_sbd, 0), 1);
+    sysbus_connect_irq(intc_sbd, 0, qdev_get_gpio_in(DEVICE(&s->cpu), ARM_CPU_IRQ));
+    sysbus_connect_irq(intc_sbd, 1, qdev_get_gpio_in(DEVICE(&s->cpu), ARM_CPU_FIQ));
 
     /* 7. Keypad Matrix Controller (mapped at 0x50060000) */
     SysBusDevice *kpd_sbd = SYS_BUS_DEVICE(&s->kpd);

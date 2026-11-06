@@ -18,6 +18,7 @@
 #include "hw/display/gc9307.h"
 #include "hw/display/st7735.h"
 #include "hw/input/sprd_kpd.h"
+#include "hw/intc/sprd_intc.h"
 #include "hw/block/sprd_sfc.h"
 #include "hw/audio/sprd_audio.h"
 #include "hw/boards.h"
@@ -43,6 +44,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Nokia2660MachineState, NOKIA_2660_MACHINE)
 #define T107_UART2_BASE           0x50020000
 #define T107_TIMERS_BASE          0x50030000
 #define T107_GPIO_BASE            0x50040000
+#define T107_INTC_BASE            0x50050000        /* Interrupt Controller (32 IRQ lines) */
 #define T107_KPD_BASE             0x50060000        /* Keypad Matrix Controller */
 #define T107_SPI0_BASE            0x50080000        /* GC9307 Display interface */
 #define T107_SPI1_BASE            0x50090000        /* ST7735 Sub-Display interface */
@@ -74,6 +76,7 @@ struct T107SocState {
     SprdUartState uart[T107_NUM_UARTS];
     SprdTimerState timer;
     SprdGpioState gpio;
+    SprdIntcState intc;
     SprdKpdState kpd;
     SprdSPIState spi;
     GC9307State lcd;

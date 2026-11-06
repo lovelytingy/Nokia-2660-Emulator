@@ -150,7 +150,8 @@ class TestBootRomAndMultiStageBoot(unittest.TestCase):
         tx_output = "".join(chr(c) for c in vm.uart0_tx_buffer)
         self.assertIn("[PASS] BootROM reset vector, SPRD header validation & BOOT0 staging verified.", tx_output)
         self.assertIn("[PASS] ARM Boot Tags (ATAG_CORE, MEM, CMDLINE, SERIAL) & kernel handoff verified.", tx_output)
-        self.assertIn("*** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO, BOOTROM & ATAGS) CHECKS PASSED ***", tx_output)
+        self.assertIn("[PASS] SPRD Interrupt Controller, software IRQs & hardware IRQ vectors verified.", tx_output)
+        self.assertIn("*** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO, BOOTROM, ATAGS & INTC) CHECKS PASSED ***", tx_output)
 
 if __name__ == "__main__":
     unittest.main()

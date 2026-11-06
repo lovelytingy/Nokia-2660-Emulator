@@ -61,3 +61,13 @@ void kpd_clear_interrupt(void)
 {
     kpd_regs[SPRD_KPD_INT_CLR / 4] = 0x00000001;
 }
+
+void kpd_enable_interrupt(void)
+{
+    kpd_regs[SPRD_KPD_INT_EN / 4] = 0x00000001;
+}
+
+void kpd_disable_interrupt(void)
+{
+    kpd_regs[SPRD_KPD_INT_EN / 4] = 0x00000000;
+}

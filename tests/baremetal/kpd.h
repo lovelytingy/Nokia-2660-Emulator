@@ -60,5 +60,7 @@ int kpd_read_flip_sensor(void);
 void kpd_read_status(uint32_t *status0, uint32_t *status1);
 int kpd_is_key_pressed(KeypadKeyCode key);
 void kpd_clear_interrupt(void);
+void kpd_enable_interrupt(void);
+void kpd_disable_interrupt(void);
 
 #endif /* TEST_KPD_H */

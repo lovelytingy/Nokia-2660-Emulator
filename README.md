@@ -64,6 +64,8 @@ Nokia-2660-Emulator/
 │   │   └── sprd_gpio.c          # Unisoc SPRD GPIO controller
 │   ├── input/
 │   │   └── sprd_kpd.c           # Unisoc SPRD Keypad matrix controller
+│   ├── intc/
+│   │   └── sprd_intc.c          # Unisoc SPRD Interrupt Controller (INTC 32 lines)
 │   ├── ssi/
 │   │   └── sprd_spi.c           # Unisoc SPRD SPI host controller (SPI0 & SPI1)
 │   └── timer/
@@ -79,6 +81,7 @@ Nokia-2660-Emulator/
 │       │   └── st7735.h         # ST7735 outer sub-screen state
 │       ├── gpio/sprd_gpio.h     # SPRD GPIO registers and bank definitions
 │       ├── input/sprd_kpd.h     # Keypad matrix and Nokia keycode definitions
+│       ├── intc/sprd_intc.h     # SPRD Interrupt Controller registers & IRQ map
 │       ├── ssi/sprd_spi.h       # SPRD SPI host interface
 │       └── timer/sprd_timer.h   # SPRD System Timer registers
 ├── roms/
@@ -88,10 +91,12 @@ Nokia-2660-Emulator/
 │   └── Makefile                 # Built with arm-none-eabi-gcc
 ├── tests/
 │   ├── baremetal/               # ARM Cortex-A7 baremetal verification firmware
-│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, Displays, KPD, Flash, BSL, Audio, BootROM & ATAGS
-│   │   ├── startup.s            # Vector table, stack setup, boot register handoff, VFP/NEON enable
+│   │   ├── main.c               # CPU, SRAM, DRAM, Timer, GPIO, INTC, Displays, KPD, Flash, Audio, BootROM & ATAGS
+│   │   ├── startup.s            # Vector table, stack setup, boot register handoff, IRQ handler, VFP/NEON enable
 │   │   ├── atags.c              # Baremetal ARM Boot Tags (ATAGS) driver & validator
 │   │   ├── atags.h              # ATAGS structures & ARM handoff declarations
+│   │   ├── intc.c               # Baremetal SPRD INTC driver, ISR dispatcher & register controls
+│   │   ├── intc.h               # INTC registers, IRQ channel numbers & CPU interrupt APIs
 │   │   ├── bootrom.c            # Baremetal BootROM reset vector & BOOT0 loader driver
 │   │   ├── bootrom.h            # SPRD BOOT0 header definition & loader API
 │   │   ├── sprd_uart.c          # Baremetal UART driver
@@ -101,9 +106,10 @@ Nokia-2660-Emulator/
 │   │   ├── bsl.c                # Baremetal BSL HDLC & CRC16 protocol driver
 │   │   ├── audio.c              # Baremetal Audio DAC, PCM streaming & tone buzzer driver
 │   │   ├── kpd.c                # Baremetal Keypad and Hall flip sensor driver
-│   │   ├── linker.ld            # Linker script targeting T107 memory map
+│   │   ├── linker.ld            # Linker script targeting T107 memory map (with 4 KB IRQ stack)
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
 │   └── unit/
+│       ├── test_intc.py         # SPRD INTC registers, soft IRQ, FIQ routing & vector tests
 │       ├── test_atags.py        # ARM Boot Tags synthesizer, parser & handoff tests
 │       ├── test_bootrom.py      # BootROM reset vector, BOOT0 packaging & boot flow tests
 │       ├── test_pac_extractor.py # Unisoc .PAC packaging, extraction & XML tests
@@ -203,14 +209,19 @@ Output:
 [TEST] Testing ARM Boot Tags (ATAGS) & Kernel Handoff...
 [ATAGS] RAM Base: 0x80000000 | Size: 48 MB | Board ID: 0x9117
 [PASS] ARM Boot Tags (ATAG_CORE, MEM, CMDLINE, SERIAL) & kernel handoff verified.
+[TEST] Testing SPRD Interrupt Controller (INTC) at 0x50050000...
+[INTC] Software IRQ 15 successfully executed (Counter: 1)
+[INTC] Keypad IRQ 5 successfully executed (Counter: 1)
+[INTC] Final Masked Status: 0x00000000
+[PASS] SPRD Interrupt Controller, software IRQs & hardware IRQ vectors verified.
 [TEST] Triggering MMIO read at unmapped address 0x40001000...
 
-[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x80000C04
+[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x40001000 (size 4) from PC 0x80000D80
 [INFO] Unmapped MMIO read returned: 0x00000000
 
 --------------------------------------------------------
-[RESULT] *** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO, BOOTROM & ATAGS) CHECKS PASSED ***
-[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL, Audio, BootROM & ATAGS OK!
+[RESULT] *** ALL PHASE 1, 2, 3 & 4 (DISPLAY, INPUT, STORAGE, AUDIO, BOOTROM, ATAGS & INTC) CHECKS PASSED ***
+[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, INTC, SPI0, GC9307, KPD, Flip, Sub-LCD, SFC, BSL, Audio, BootROM & ATAGS OK!
 --------------------------------------------------------
 ```
 
@@ -357,7 +368,7 @@ For detailed architecture, tag structure layouts, and register specifications, s
 - [x] **Phase 1: CPU and Memory Emulation** (ARM Cortex-A7, SRAM, DRAM, SPRD UART, Baremetal test passed)
 - [x] **Phase 2: T107 Memory Map & Core SoC** (Timers, GPIO, MMIO access logging, down-counter verification)
 - [x] **Phase 3: Nokia Peripherals (Displays, Input, Storage & Audio)** (SPRD SPI0 & SPI1, GC9307 main LCD, ST7735 sub-screen, SPRD KPD matrix, Hall flip sensor, 128 MB SPI NAND & SFC, SPRD Audio DAC & Tone Buzzer)
-- [x] **Phase 4: BootROM, BSL Engine, PAC Tools & ARM Boot Tags (ATAGS)** (Reset vector at 0x00000000, download key detection, SPRD BOOT0 header parser, NAND Block 0 staging, BSL HDLC framing & CRC16, FDL1/FDL2 staging, PAC unpacker & builder, ARMv7-A ATAGS synthesis/parser & r0=0, r1=0x9117, r2=0x80000100 handoff)
+- [x] **Phase 4: BootROM, BSL Engine, PAC Tools, ATAGS & Interrupt Controller (INTC)** (Reset vector at 0x00000000, download key detection, SPRD BOOT0 header parser, NAND Block 0 staging, BSL HDLC framing & CRC16, FDL1/FDL2 staging, PAC unpacker & builder, ARMv7-A ATAGS synthesis/parser & r0=0, r1=0x9117, r2=0x80000100 handoff, 32-line INTC at 0x50050000, CPU IRQ exception vectors & software IRQ dispatch)
 - [ ] **Phase 4 (Cont.): MOCOR OS Bringup & Vendor Firmware Execution** (FDL1 DDR init, FDL2 flash ops, BOOT1/LK, MOCOR OS)
 - [ ] **Phase 5: OpenFeatureOS Development** (Custom kernel bringup and verification)
 

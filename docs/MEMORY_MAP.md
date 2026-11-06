@@ -16,6 +16,7 @@ The following table summarizes the verified physical memory addresses and device
 | `0x50020000 - 0x50020FFF` | 4 KB | SPRD UART2 | Bluetooth / Modem communication port. | Documented |
 | `0x50030000 - 0x50030FFF` | 4 KB | SPRD Timers | High-resolution system tick and watchdog timers. | Documented |
 | `0x50040000 - 0x50040FFF` | 4 KB | SPRD GPIO Controller | General-purpose I/O & Hall effect flip sensor (Bank 0 Pin 0). | Verified |
+| `0x50050000 - 0x50050FFF` | 4 KB | SPRD INTC (Interrupt Controller) | 32-line interrupt controller (IRQ/FIQ routing, software triggers). | Verified |
 | `0x50060000 - 0x50060FFF` | 4 KB | SPRD Keypad Controller | 8x8 Hardware keypad matrix scanner (STATUS0 & STATUS1). | Verified |
 | `0x50080000 - 0x50080FFF` | 4 KB | SPRD SPI0 (GC9307 LCD) | High-speed SPI to primary 2.8" QVGA (240x320) display panel. | Verified |
 | `0x50090000 - 0x50090FFF` | 4 KB | SPRD SPI1 (ST7735 LCD) | SPI interface to secondary 1.77" QQVGA (120x160) outer screen. | Verified |

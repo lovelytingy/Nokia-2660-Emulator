@@ -46,5 +46,13 @@ SECTIONS
         _stack_top = .;
     } > DRAM
 
+    /* IRQ Stack region (4 KB) */
+    .irq_stack (NOLOAD) : {
+        . = ALIGN(8);
+        _irq_stack_bottom = .;
+        . += 0x1000;
+        _irq_stack_top = .;
+    } > DRAM
+
     _end = .;
 }
