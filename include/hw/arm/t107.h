@@ -14,6 +14,8 @@
 #include "hw/char/sprd_uart.h"
 #include "hw/timer/sprd_timer.h"
 #include "hw/gpio/sprd_gpio.h"
+#include "hw/ssi/sprd_spi.h"
+#include "hw/display/gc9307.h"
 #include "hw/boards.h"
 
 #define TYPE_T107_SOC "t107-soc"
@@ -55,6 +57,8 @@ struct T107SocState {
     SprdUartState uart[T107_NUM_UARTS];
     SprdTimerState timer;
     SprdGpioState gpio;
+    SprdSPIState spi;
+    GC9307State lcd;
 };
 
 struct Nokia2660MachineState {

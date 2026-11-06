@@ -58,6 +58,17 @@ GPIO_DMSK        = 0x0004
 GPIO_DIR         = 0x0008
 GPIO_INEN        = 0x0028
 
+SPRD_SPI0_BASE   = 0x50080000
+SPI_TXD          = 0x0000
+SPI_CLKD         = 0x0004
+SPI_CTL0         = 0x0008
+SPI_CTL1         = 0x000C
+SPI_CTL4         = 0x0018
+SPI_STS1         = 0x0030
+
+GC9307_WIDTH     = 240
+GC9307_HEIGHT    = 320
+
 PL011_UART_BASE = 0x09000000
 
 class T107UnicornVM:
@@ -81,6 +92,23 @@ class T107UnicornVM:
         self.gpio_dir = 0
         self.gpio_inen = 0
 
+        # GalaxyCore GC9307 LCD Display State (240x320 RGB565)
+        self.framebuffer = [[0 for _ in range(GC9307_WIDTH)] for _ in range(GC9307_HEIGHT)]
+        self.lcd_sleep = True
+        self.lcd_on = False
+        self.lcd_col_start = 0
+        self.lcd_col_end = GC9307_WIDTH - 1
+        self.lcd_row_start = 0
+        self.lcd_row_end = GC9307_HEIGHT - 1
+        self.lcd_cur_x = 0
+        self.lcd_cur_y = 0
+        self.lcd_state = 'CMD'
+        self.lcd_cmd = 0
+        self.lcd_params = []
+        self.lcd_expected_params = 0
+        self.lcd_pixel_high = None
+        self.spi_dc_mode = False  # False = Command, True = Data
+
         # Map Memory Regions
         # 1. Internal SRAM
         self.uc.mem_map(SRAM_BASE, SRAM_SIZE)
@@ -89,10 +117,11 @@ class T107UnicornVM:
         self.dram_map_size = 16 * 1024 * 1024
         self.uc.mem_map(DRAM_BASE, self.dram_map_size)
 
-        # 3. Peripheral MMIO space (map pages for SPRD UART, Timers, GPIO, PL011)
+        # 3. Peripheral MMIO space (map pages for SPRD UART, Timers, GPIO, SPI0, PL011)
         self.uc.mem_map(SPRD_UART0_BASE, 0x1000)
         self.uc.mem_map(SPRD_TIMERS_BASE, 0x1000)
         self.uc.mem_map(SPRD_GPIO_BASE, 0x1000)
+        self.uc.mem_map(SPRD_SPI0_BASE, 0x1000)
         self.uc.mem_map(PL011_UART_BASE, 0x1000)
         # Also map page around 0x40001000 to test unmapped traps
         self.uc.mem_map(0x40001000 & ~0xFFF, 0x1000)
@@ -153,6 +182,67 @@ class T107UnicornVM:
                 self.gpio_inen = value & 0xFFFFFFFF
             return
 
+        # 5. SPRD SPI0 / GalaxyCore GC9307 Display
+        if SPRD_SPI0_BASE <= address < (SPRD_SPI0_BASE + 0x1000):
+            offset = address - SPRD_SPI0_BASE
+            if offset == SPI_CTL4:
+                self.spi_dc_mode = bool(value & 0x1)
+            elif offset == SPI_TXD:
+                byte = value & 0xFF
+                if not self.spi_dc_mode:
+                    # Command Mode
+                    self.lcd_cmd = byte
+                    self.lcd_params = []
+                    self.lcd_pixel_high = None
+                    if byte == 0x01: # SWRESET
+                        self.framebuffer = [[0 for _ in range(GC9307_WIDTH)] for _ in range(GC9307_HEIGHT)]
+                        self.lcd_col_start, self.lcd_col_end = 0, GC9307_WIDTH - 1
+                        self.lcd_row_start, self.lcd_row_end = 0, GC9307_HEIGHT - 1
+                    elif byte == 0x11: # SLPOUT
+                        self.lcd_sleep = False
+                    elif byte == 0x29: # DISPON
+                        self.lcd_on = True
+                    elif byte == 0x2A: # CASET
+                        self.lcd_state = 'PARAM'
+                        self.lcd_expected_params = 4
+                    elif byte == 0x2B: # RASET
+                        self.lcd_state = 'PARAM'
+                        self.lcd_expected_params = 4
+                    elif byte == 0x2C: # RAMWR
+                        self.lcd_state = 'PIXELS'
+                        self.lcd_cur_x = self.lcd_col_start
+                        self.lcd_cur_y = self.lcd_row_start
+                    elif byte in (0x3A, 0x36):
+                        self.lcd_state = 'PARAM'
+                        self.lcd_expected_params = 1
+                else:
+                    # Data Mode
+                    if self.lcd_state == 'PARAM':
+                        self.lcd_params.append(byte)
+                        if len(self.lcd_params) >= self.lcd_expected_params:
+                            if self.lcd_cmd == 0x2A:
+                                self.lcd_col_start = min((self.lcd_params[0] << 8) | self.lcd_params[1], GC9307_WIDTH - 1)
+                                self.lcd_col_end   = min((self.lcd_params[2] << 8) | self.lcd_params[3], GC9307_WIDTH - 1)
+                            elif self.lcd_cmd == 0x2B:
+                                self.lcd_row_start = min((self.lcd_params[0] << 8) | self.lcd_params[1], GC9307_HEIGHT - 1)
+                                self.lcd_row_end   = min((self.lcd_params[2] << 8) | self.lcd_params[3], GC9307_HEIGHT - 1)
+                            self.lcd_state = 'CMD'
+                    elif self.lcd_state == 'PIXELS':
+                        if self.lcd_pixel_high is None:
+                            self.lcd_pixel_high = byte
+                        else:
+                            color = (self.lcd_pixel_high << 8) | byte
+                            self.lcd_pixel_high = None
+                            if 0 <= self.lcd_cur_y < GC9307_HEIGHT and 0 <= self.lcd_cur_x < GC9307_WIDTH:
+                                self.framebuffer[self.lcd_cur_y][self.lcd_cur_x] = color
+                            self.lcd_cur_x += 1
+                            if self.lcd_cur_x > self.lcd_col_end:
+                                self.lcd_cur_x = self.lcd_col_start
+                                self.lcd_cur_y += 1
+                                if self.lcd_cur_y > self.lcd_row_end:
+                                    self.lcd_cur_y = self.lcd_row_start
+            return
+
         # 5. Catch-all unknown peripheral writes
         if 0x40000000 <= address < 0x60000000:
             pc = uc.reg_read(UC_ARM_REG_PC)
@@ -200,6 +290,14 @@ class T107UnicornVM:
                 uc.mem_write(address, (self.gpio_inen & 0xFFFFFFFF).to_bytes(4, 'little'))
                 return
 
+        # 4. SPRD SPI0 Controller Status
+        if SPRD_SPI0_BASE <= address < (SPRD_SPI0_BASE + 0x1000):
+            offset = address - SPRD_SPI0_BASE
+            if offset == SPI_STS1:
+                # Bit 8 = 1 (TX FIFO Empty / ready)
+                uc.mem_write(address, (1 << 8).to_bytes(4, 'little'))
+                return
+
         # 4. Catch-all unknown peripheral reads
         if 0x40000000 <= address < 0x60000000:
             pc = uc.reg_read(UC_ARM_REG_PC)
@@ -238,6 +336,39 @@ class T107UnicornVM:
         print("[VM] Emulation finished cleanly.")
         return True
 
+    def export_ppm(self, file_path):
+        """Exports 240x320 framebuffer as standard PPM image."""
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        with open(file_path, "wb") as f:
+            header = f"P6\n{GC9307_WIDTH} {GC9307_HEIGHT}\n255\n"
+            f.write(header.encode('ascii'))
+            for y in range(GC9307_HEIGHT):
+                row = bytearray()
+                for x in range(GC9307_WIDTH):
+                    c = self.framebuffer[y][x]
+                    # Convert RGB565 to RGB888
+                    r = ((c >> 11) & 0x1F) * 255 // 31
+                    g = ((c >> 5) & 0x3F) * 255 // 63
+                    b = (c & 0x1F) * 255 // 31
+                    row.extend([r, g, b])
+                f.write(row)
+        print(f"[N2660Emu Display] Saved framebuffer image to '{file_path}' ({GC9307_WIDTH}x{GC9307_HEIGHT})")
+
+    def render_terminal_preview(self):
+        """Renders downscaled 24-bit ANSI truecolor screen preview in terminal."""
+        print("\n=== Nokia 2660 Flip Screen Preview (240x320 QVGA) ===")
+        # 60 cols x 40 rows
+        for y in range(0, GC9307_HEIGHT, 8):
+            line = ""
+            for x in range(0, GC9307_WIDTH, 4):
+                c = self.framebuffer[y][x]
+                r = ((c >> 11) & 0x1F) * 255 // 31
+                g = ((c >> 5) & 0x3F) * 255 // 63
+                b = (c & 0x1F) * 255 // 31
+                line += f"\033[48;2;{r};{g};{b}m \033[0m"
+            print(line)
+        print("=" * 60)
+
 def main():
     parser = argparse.ArgumentParser(description="N2660Emu Unicorn VM Runner")
     parser.add_argument("binary", help="Path to raw binary file to execute")
@@ -246,6 +377,8 @@ def main():
     parser.add_argument("--trace", action="store_true", help="Enable instruction tracing")
     parser.add_argument("--max-insns", type=int, default=0, help="Maximum instructions to execute")
     parser.add_argument("--timeout", type=int, default=5, help="Timeout in seconds")
+    parser.add_argument("--screen-dump", type=str, default=None, help="Path to dump framebuffer image (.ppm)")
+    parser.add_argument("--preview-screen", action="store_true", help="Render ANSI truecolor screen preview in terminal")
     args = parser.parse_args()
 
     if not os.path.isfile(args.binary):
@@ -255,6 +388,13 @@ def main():
     vm = T107UnicornVM(trace_instructions=args.trace, max_instructions=args.max_insns)
     vm.load_binary(args.binary, args.entry)
     success = vm.run(entry_point=args.entry, timeout_sec=args.timeout)
+
+    if args.screen_dump:
+        vm.export_ppm(args.screen_dump)
+
+    if args.preview_screen:
+        vm.render_terminal_preview()
+
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":

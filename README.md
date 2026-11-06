@@ -134,12 +134,18 @@ Trace CPU instructions as they execute in real time:
 make trace
 ```
 
-### 4. Run Automated Unit Tests
+### 4. Render and Dump Display Framebuffer
+Initialize the GalaxyCore GC9307 screen, render the 240x320 test graphics, and dump the framebuffer image:
+```bash
+make screen
+```
+
+### 5. Run Automated Unit Tests
 ```bash
 make test
 ```
 
-### 5. Disassemble Binary with Unisoc T107 Annotations
+### 6. Disassemble Binary with Unisoc T107 Annotations
 ```bash
 make disasm
 ```
@@ -173,7 +179,8 @@ To list partition layouts and load addresses without extracting:
 ## Roadmap
 
 - [x] **Phase 1: CPU and Memory Emulation** (ARM Cortex-A7, SRAM, DRAM, SPRD UART, Baremetal test passed)
-- [ ] **Phase 2: T107 Memory Map & Core SoC** (Timers, Interrupt controller, GPIO, MMIO logging)
-- [ ] **Phase 3: Nokia Peripherals** (SPI controller, GC9307 LCD, Matrix keypad, USB BSL)
+- [x] **Phase 2: T107 Memory Map & Core SoC** (Timers, GPIO, MMIO access logging, down-counter verification)
+- [x] **Phase 3: Nokia Peripherals (Display & SPI)** (SPRD SPI0, GalaxyCore GC9307 240x320 LCD, framebuffer dumping)
+- [ ] **Phase 3 (Cont.): Input & Storage** (Keypad matrix, flip hall sensor, SPI NAND storage)
 - [ ] **Phase 4: Firmware Execution** (FDL1 DDR init, FDL2 flash ops, BOOT0/BOOT1, MOCOR OS)
 - [ ] **Phase 5: OpenFeatureOS Development** (Custom kernel bringup and verification)

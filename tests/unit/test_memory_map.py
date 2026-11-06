@@ -27,6 +27,7 @@ from tools.unicorn_runner import (
     SPRD_UART0_BASE, SPRD_TXD_REG, SPRD_STS1_REG,
     SPRD_TIMERS_BASE, TIMER_LOAD_LO, TIMER_VALUE_LO, TIMER_CTL,
     SPRD_GPIO_BASE, GPIO_DATA, GPIO_DIR,
+    SPRD_SPI0_BASE, GC9307_WIDTH, GC9307_HEIGHT,
     T107UnicornVM
 )
 
@@ -57,6 +58,28 @@ class TestN2660EmuMemoryMap(unittest.TestCase):
         self.assertEqual(SPRD_GPIO_BASE, 0x50040000)
         self.assertEqual(GPIO_DATA, 0x0000)
         self.assertEqual(GPIO_DIR, 0x0008)
+
+    def test_sprd_spi_and_gc9307_display(self):
+        self.assertEqual(SPRD_SPI0_BASE, 0x50080000)
+        self.assertEqual(GC9307_WIDTH, 240)
+        self.assertEqual(GC9307_HEIGHT, 320)
+
+        bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")
+        vm = T107UnicornVM(trace_instructions=False)
+        vm.load_binary(bin_path, DRAM_BASE)
+        success = vm.run(entry_point=DRAM_BASE, timeout_sec=5)
+        self.assertTrue(success)
+
+        # Verify GC9307 color bar pixel values
+        self.assertEqual(vm.framebuffer[50][15], 0xFFFF)   # White
+        self.assertEqual(vm.framebuffer[50][45], 0xFFE0)   # Yellow
+        self.assertEqual(vm.framebuffer[50][75], 0x07FF)   # Cyan
+        self.assertEqual(vm.framebuffer[50][105], 0x07E0)  # Green
+        self.assertEqual(vm.framebuffer[50][135], 0xF81F)  # Magenta
+        self.assertEqual(vm.framebuffer[50][165], 0xF800)  # Red
+        self.assertEqual(vm.framebuffer[50][195], 0x001F)  # Blue
+        self.assertEqual(vm.framebuffer[50][225], 0x0000)  # Black
+        self.assertEqual(vm.framebuffer[260][120], 0x0215) # Nokia Blue footer
 
     def test_baremetal_payload_execution(self):
         bin_path = os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")

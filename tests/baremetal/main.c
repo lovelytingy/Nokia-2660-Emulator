@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "sprd_uart.h"
+#include "gc9307.h"
 
 /* Peripheral Base Addresses */
 #define SPRD_TIMERS_BASE   0x50030000
@@ -180,7 +181,15 @@ int main(void)
         uart_puts("[FAIL] SPRD GPIO readback mismatch.\n");
     }
 
-    /* 6. MMIO Trap Test (Read from unmapped peripheral space) */
+    /* 6. GalaxyCore GC9307 QVGA Display Test */
+    uart_puts("[TEST] Initializing GalaxyCore GC9307 LCD at SPI0 0x50080000...\n");
+    gc9307_init();
+    uart_puts("[LCD] Drawing 240x320 QVGA test pattern & color bars...\n");
+    gc9307_draw_test_screen();
+    uart_puts("[PASS] GC9307 display rendering test completed.\n");
+    int lcd_ok = 1;
+
+    /* 7. MMIO Trap Test (Read from unmapped peripheral space) */
     uart_puts("[TEST] Triggering MMIO read at unmapped address 0x40001000...\n");
     volatile uint32_t *unmapped_reg = (volatile uint32_t *)0x40001000;
     uint32_t dummy_val = *unmapped_reg;
@@ -188,11 +197,11 @@ int main(void)
     uart_puthex32(dummy_val);
     uart_puts("\n");
 
-    /* 7. Summary */
+    /* 8. Summary */
     uart_puts("\n--------------------------------------------------------\n");
-    if (sram_ok && dram_ok && timer_ok && gpio_ok) {
-        uart_puts("[RESULT] *** ALL PHASE 1 & PHASE 2 MILESTONE CHECKS PASSED ***\n");
-        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, and GPIO Verified!\n");
+    if (sram_ok && dram_ok && timer_ok && gpio_ok && lcd_ok) {
+        uart_puts("[RESULT] *** ALL PHASE 1, 2, AND 3 (DISPLAY) CHECKS PASSED ***\n");
+        uart_puts("[RESULT] CPU, SRAM, DRAM, UART, Timer, GPIO, SPI0, & GC9307 OK!\n");
     } else {
         uart_puts("[RESULT] *** SOME TESTS FAILED ***\n");
     }

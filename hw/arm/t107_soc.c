@@ -61,6 +61,8 @@ static void t107_soc_init(Object *obj)
 
     object_initialize_child(obj, "timer", &s->timer, TYPE_SPRD_TIMER);
     object_initialize_child(obj, "gpio", &s->gpio, TYPE_SPRD_GPIO);
+    object_initialize_child(obj, "spi", &s->spi, TYPE_SPRD_SPI);
+    object_initialize_child(obj, "lcd", &s->lcd, TYPE_GC9307);
 }
 
 static void t107_soc_realize(DeviceState *dev, Error **errp)
@@ -117,6 +119,18 @@ static void t107_soc_realize(DeviceState *dev, Error **errp)
     }
     memory_region_add_subregion_overlap(sysmem, T107_GPIO_BASE,
                                         sysbus_mmio_get_region(gpio_sbd, 0), 1);
+
+    /* 7. GC9307 Display Panel & SPRD SPI0 Controller (mapped at 0x50080000) */
+    if (!qdev_realize(DEVICE(&s->lcd), NULL, errp)) {
+        return;
+    }
+    s->spi.lcd = &s->lcd;
+    SysBusDevice *spi_sbd = SYS_BUS_DEVICE(&s->spi);
+    if (!sysbus_realize(spi_sbd, errp)) {
+        return;
+    }
+    memory_region_add_subregion_overlap(sysmem, T107_SPI0_BASE,
+                                        sysbus_mmio_get_region(spi_sbd, 0), 1);
 }
 
 static Property t107_soc_properties[] = {
