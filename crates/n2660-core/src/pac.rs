@@ -141,56 +141,85 @@ impl PacArchive {
             return Err("File too small for PAC archive");
         }
 
-        let mut pac_version = decode_utf16le(&bytes[0..96]);
-        let mut total_size = u32::from_le_bytes([bytes[96], bytes[97], bytes[98], bytes[99]]) as usize;
-        let mut product_name = decode_utf16le(&bytes[100..612]);
-        let mut product_version = decode_utf16le(&bytes[612..1124]);
-        let mut file_count = u32::from_le_bytes([bytes[1124], bytes[1125], bytes[1126], bytes[1127]]) as usize;
-        let mut file_offset = u32::from_le_bytes([bytes[1128], bytes[1129], bytes[1130], bytes[1131]]) as usize;
-        let flash_type = u32::from_le_bytes([bytes[1136], bytes[1137], bytes[1138], bytes[1139]]);
+        // Detect header format (Standard 48-byte vs 96-byte version field)
+        let (pac_version, total_size, product_name, product_version, file_count, file_offset, flash_type) = {
+            let std_file_count = if bytes.len() >= 1080 {
+                u32::from_le_bytes([bytes[1076], bytes[1077], bytes[1078], bytes[1079]]) as usize
+            } else { 0 };
+            let std_file_offset = if bytes.len() >= 1084 {
+                u32::from_le_bytes([bytes[1080], bytes[1081], bytes[1082], bytes[1083]]) as usize
+            } else { 0 };
 
-        // Fallback for compact headers
-        if file_count > 1024 || file_offset >= bytes.len() {
-            if bytes.len() >= 96 {
-                let alt_count = u32::from_le_bytes([bytes[96], bytes[97], bytes[98], bytes[99]]) as usize;
-                let alt_offset = u32::from_le_bytes([bytes[100], bytes[101], bytes[102], bytes[103]]) as usize;
-                if alt_count > 0 && alt_count <= 1024 && alt_offset < bytes.len() {
-                    pac_version = "BP_R1.0.0".to_string();
-                    product_name = decode_utf16le(&bytes[0..48]);
-                    product_version = decode_utf16le(&bytes[48..96]);
-                    file_count = alt_count;
-                    file_offset = alt_offset;
-                    total_size = bytes.len();
-                }
+            if std_file_count > 0 && std_file_count <= 256 && std_file_offset < bytes.len() {
+                let v = decode_utf16le(&bytes[0..48]);
+                let sz = u32::from_le_bytes([bytes[48], bytes[49], bytes[50], bytes[51]]) as usize;
+                let prd = decode_utf16le(&bytes[52..564]);
+                let prd_v = decode_utf16le(&bytes[564..1076]);
+                let fl = if bytes.len() >= 1092 { u32::from_le_bytes([bytes[1088], bytes[1089], bytes[1090], bytes[1091]]) } else { 0 };
+                (v, sz, prd, prd_v, std_file_count, std_file_offset, fl)
+            } else {
+                let leg_file_count = if bytes.len() >= 1128 {
+                    u32::from_le_bytes([bytes[1124], bytes[1125], bytes[1126], bytes[1127]]) as usize
+                } else { 0 };
+                let leg_file_offset = if bytes.len() >= 1132 {
+                    u32::from_le_bytes([bytes[1128], bytes[1129], bytes[1130], bytes[1131]]) as usize
+                } else { 0 };
+                let v = decode_utf16le(&bytes[0..96.min(bytes.len())]);
+                let sz = if bytes.len() >= 100 { u32::from_le_bytes([bytes[96], bytes[97], bytes[98], bytes[99]]) as usize } else { bytes.len() };
+                let prd = decode_utf16le(&bytes[100..612.min(bytes.len())]);
+                let prd_v = decode_utf16le(&bytes[612..1124.min(bytes.len())]);
+                let fl = if bytes.len() >= 1140 { u32::from_le_bytes([bytes[1136], bytes[1137], bytes[1138], bytes[1139]]) } else { 0 };
+                (v, sz, prd, prd_v, leg_file_count, leg_file_offset, fl)
             }
-        }
+        };
 
         let mut files = Vec::with_capacity(file_count);
+        let mut cur_rec_ptr = file_offset;
+
         for i in 0..file_count {
-            let rec_start = file_offset + i * PAC_RECORD_SIZE;
-            if rec_start + 4 > bytes.len() {
+            if cur_rec_ptr + 4 > bytes.len() {
                 break;
             }
 
-            let rec_size = u32::from_le_bytes([bytes[rec_start], bytes[rec_start + 1], bytes[rec_start + 2], bytes[rec_start + 3]]) as usize;
-            let effective_size = if rec_size == 0 || rec_size > 65536 { PAC_RECORD_SIZE } else { rec_size };
-            if rec_start + effective_size > bytes.len() {
+            let rec_size = u32::from_le_bytes([bytes[cur_rec_ptr], bytes[cur_rec_ptr + 1], bytes[cur_rec_ptr + 2], bytes[cur_rec_ptr + 3]]) as usize;
+            let effective_size = if rec_size >= 516 && rec_size <= 65536 { rec_size } else { PAC_RECORD_SIZE };
+            if cur_rec_ptr + effective_size > bytes.len() {
                 break;
             }
-            let rec = &bytes[rec_start..rec_start + effective_size];
+            let rec = &bytes[cur_rec_ptr..cur_rec_ptr + effective_size];
 
             let id = decode_utf16le(&rec[4..516.min(rec.len())]);
             let filename = decode_utf16le(&rec[516.min(rec.len())..1028.min(rec.len())]);
             let version = decode_utf16le(&rec[1028.min(rec.len())..1540.min(rec.len())]);
 
-            let lo_size = if rec.len() >= 1544 { u32::from_le_bytes([rec[1540], rec[1541], rec[1542], rec[1543]]) as u64 } else { 0 };
-            let hi_size = if rec.len() >= 1548 { u32::from_le_bytes([rec[1544], rec[1545], rec[1546], rec[1547]]) as u64 } else { 0 };
-            let data_size = (lo_size | (hi_size << 32)) as usize;
+            // Check if 32-bit offset layout (offset at 1552) or 64-bit size layout (offset at 1556)
+            let (data_size, file_flag, offset, load_addr) = {
+                let off_1552 = if rec.len() >= 1556 {
+                    u32::from_le_bytes([rec[1552], rec[1553], rec[1554], rec[1555]]) as usize
+                } else { 0 };
+                let off_1556 = if rec.len() >= 1560 {
+                    u32::from_le_bytes([rec[1556], rec[1557], rec[1558], rec[1559]]) as usize
+                } else { 0 };
 
-            let file_flag = if rec.len() >= 1552 { u32::from_le_bytes([rec[1548], rec[1549], rec[1550], rec[1551]]) } else { 0 };
-            let offset = if rec.len() >= 1560 { u32::from_le_bytes([rec[1556], rec[1557], rec[1558], rec[1559]]) as usize } else { 0 };
-            let addr_num = if rec.len() >= 1568 { u32::from_le_bytes([rec[1564], rec[1565], rec[1566], rec[1567]]) } else { 0 };
-            let load_addr = if rec.len() >= 1572 && addr_num > 0 { u32::from_le_bytes([rec[1568], rec[1569], rec[1570], rec[1571]]) } else { 0 };
+                if off_1552 > 0 && off_1552 < bytes.len() {
+                    let sz = u32::from_le_bytes([rec[1540], rec[1541], rec[1542], rec[1543]]) as usize;
+                    let flag = u32::from_le_bytes([rec[1544], rec[1545], rec[1546], rec[1547]]);
+                    let addr_num = if rec.len() >= 1564 { u32::from_le_bytes([rec[1560], rec[1561], rec[1562], rec[1563]]) } else { 0 };
+                    let laddr = if rec.len() >= 1568 && addr_num > 0 { u32::from_le_bytes([rec[1564], rec[1565], rec[1566], rec[1567]]) } else { 0 };
+                    (sz, flag, off_1552, laddr)
+                } else if off_1556 > 0 && off_1556 < bytes.len() {
+                    let lo_size = u32::from_le_bytes([rec[1540], rec[1541], rec[1542], rec[1543]]) as u64;
+                    let hi_size = u32::from_le_bytes([rec[1544], rec[1545], rec[1546], rec[1547]]) as u64;
+                    let sz = (lo_size | (hi_size << 32)) as usize;
+                    let flag = if rec.len() >= 1552 { u32::from_le_bytes([rec[1548], rec[1549], rec[1550], rec[1551]]) } else { 0 };
+                    let addr_num = if rec.len() >= 1568 { u32::from_le_bytes([rec[1564], rec[1565], rec[1566], rec[1567]]) } else { 0 };
+                    let laddr = if rec.len() >= 1572 && addr_num > 0 { u32::from_le_bytes([rec[1568], rec[1569], rec[1570], rec[1571]]) } else { 0 };
+                    (sz, flag, off_1556, laddr)
+                } else {
+                    let sz = u32::from_le_bytes([rec[1540], rec[1541], rec[1542], rec[1543]]) as usize;
+                    (sz, 0, 0, 0)
+                }
+            };
 
             let mut data = Vec::new();
             if offset > 0 && offset < bytes.len() && data_size > 0 {
@@ -209,6 +238,8 @@ impl PacArchive {
                 active: file_flag == 1 || data_size > 0,
                 data,
             });
+
+            cur_rec_ptr += effective_size;
         }
 
         Ok(Self {

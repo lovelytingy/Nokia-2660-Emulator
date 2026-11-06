@@ -7,8 +7,8 @@ use n2660_core::vm::T107Vm;
 #[test]
 fn test_sram_and_dram_boundaries() {
     assert_eq!(SRAM_BASE, 0x0000_0000);
-    assert_eq!(SRAM_SIZE, 64 * 1024);
-    assert_eq!(SRAM_BASE + SRAM_SIZE as u64, 0x0001_0000);
+    assert_eq!(SRAM_SIZE, 256 * 1024);
+    assert_eq!(SRAM_BASE + SRAM_SIZE as u64, 0x0004_0000);
 
     assert_eq!(DRAM_BASE, 0x8000_0000);
     assert_eq!(DRAM_SIZE, 48 * 1024 * 1024);

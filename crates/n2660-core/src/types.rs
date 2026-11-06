@@ -2,7 +2,7 @@
 //! Constant memory map addresses, display dimensions, and hardware identifiers for Nokia 2660 / Unisoc T107.
 
 pub const SRAM_BASE: u64 = 0x0000_0000;
-pub const SRAM_SIZE: usize = 64 * 1024; // 64 KB
+pub const SRAM_SIZE: usize = 256 * 1024; // 256 KB On-Chip SYSRAM/IRAM
 
 pub const DRAM_BASE: u64 = 0x8000_0000;
 pub const DRAM_SIZE: usize = 48 * 1024 * 1024; // 48 MB
@@ -18,6 +18,18 @@ pub const PL011_UART_SIZE: usize = 0x1000; // 4 KB
 
 pub const TRAP_BASE: u64 = 0x4000_0000;
 pub const TRAP_SIZE: usize = 0x0001_0000; // 64 KB
+
+pub const SPRD_DMC_BASE: u64 = 0x3000_0000;
+pub const SPRD_DMC_SIZE: usize = 0x0001_0000; // 64 KB DDR Controller & PHY
+
+pub const SPRD_DEBUG_UART_BASE: u64 = 0x7010_0000;
+pub const SPRD_DEBUG_UART_SIZE: usize = 0x0000_1000; // 4 KB Boot Debug UART
+
+pub const SPRD_SYSTIMER_BASE: u64 = 0x4023_0000;
+pub const SPRD_SYSTIMER_SIZE: usize = 0x0000_1000; // 4 KB AON System Timer
+
+pub const SPRD_HW_SFC_BASE: u64 = 0x21A0_0000;
+pub const SPRD_HW_SFC_SIZE: usize = 0x0001_0000; // 64 KB Hardware Serial Flash Controller (SFC)
 
 // Peripheral MMIO Offsets
 pub const SPRD_UART0_BASE: u32 = 0x5000_0000;

@@ -87,6 +87,22 @@ impl T107Vm {
         uc.mem_map(TRAP_BASE, TRAP_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map Trap window at 0x{:X}: {:?}", TRAP_BASE, e))?;
 
+        // 6. Map SPRD DMC / DDR PHY (64 KB at 0x3000_0000)
+        uc.mem_map(SPRD_DMC_BASE, SPRD_DMC_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map DMC at 0x{:X}: {:?}", SPRD_DMC_BASE, e))?;
+
+        // 7. Map SPRD Boot Debug UART (4 KB at 0x7010_0000)
+        uc.mem_map(SPRD_DEBUG_UART_BASE, SPRD_DEBUG_UART_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map Debug UART at 0x{:X}: {:?}", SPRD_DEBUG_UART_BASE, e))?;
+
+        // 8. Map SPRD AON System Timer (4 KB at 0x4023_0000)
+        uc.mem_map(SPRD_SYSTIMER_BASE, SPRD_SYSTIMER_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map SYSTIMER at 0x{:X}: {:?}", SPRD_SYSTIMER_BASE, e))?;
+
+        // 9. Map SPRD Hardware SFC (64 KB at 0x21A0_0000)
+        uc.mem_map(SPRD_HW_SFC_BASE, SPRD_HW_SFC_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map HW SFC at 0x{:X}: {:?}", SPRD_HW_SFC_BASE, e))?;
+
         // Setup Instruction Hook & IRQ Dispatcher
         uc.add_code_hook(0, 0xFFFF_FFFF, |uc, addr, _size| {
             let ctx = uc.get_data_mut();
@@ -100,7 +116,8 @@ impl T107Vm {
             if (cpsr & 0x80) == 0 {
                 let pending = uc.get_data().intc.get_irq_masked_status();
                 if pending != 0 {
-                    let vector_base = 0x8000_0000u64;
+                    let vector_base = if addr < DRAM_BASE { 0x0000_0000u64 } else { 0x8000_0000u64 };
+                    println!("[IRQ DISPATCH] Pending IRQs: 0x{:08X} at PC: 0x{:08X} (vector: 0x{:08X})", pending, addr, vector_base + 0x18);
                     let svc_cpsr = cpsr;
                     let irq_cpsr = (svc_cpsr & !0x1F) | 0x12 | 0x80;
                     let _ = uc.reg_write(RegisterARM::CPSR, irq_cpsr);
@@ -232,23 +249,151 @@ impl T107Vm {
             },
         ).map_err(|e| format!("Failed to add MMIO write hook: {:?}", e))?;
 
+        // Setup SPRD DMC / DDR PHY Read Hook (0x3000_0000..0x3001_0000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_DMC_BASE,
+            SPRD_DMC_BASE + SPRD_DMC_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_DMC_BASE) as u32;
+                let mut cur = [0u8; 4];
+                let _ = uc.mem_read(addr, &mut cur);
+                let mut val = u32::from_le_bytes(cur);
+
+                match offset {
+                    0x0008 => {
+                        let tap = if (val & (1 << 15)) != 0 {
+                            (val >> 1) & 0x1F
+                        } else {
+                            val & 0x1F
+                        };
+                        let bit17 = if tap >= 16 { 1 << 17 } else { 0 };
+                        val = (val & !(1 << 17)) | bit17;
+                    }
+                    0x0304 | 0x0404 | 0x0504 => {
+                        val |= 0x1000_0000;
+                    }
+                    0x0104 => {
+                        val &= !0x07F0_0000;
+                    }
+                    0x0180 => {
+                        // DDR BIST status: bit 2 = DONE (1), bit 3 = PASS (1)
+                        val |= 0x0000_000C;
+                    }
+                    _ => {}
+                }
+
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add DMC read hook: {:?}", e))?;
+
+        // Setup SPRD Boot Debug UART Hooks (0x7010_0000..0x7010_1000)
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            SPRD_DEBUG_UART_BASE,
+            SPRD_DEBUG_UART_BASE + SPRD_DEBUG_UART_SIZE as u64,
+            |uc, _mem_type, addr, _size, value| {
+                let offset = (addr - SPRD_DEBUG_UART_BASE) as u32;
+                let val = (value as u64 & 0xFFFF_FFFF) as u32;
+                if offset == 0 {
+                    let ch = (val & 0xFF) as u8;
+                    let ctx = uc.get_data_mut();
+                    ctx.uart.tx_buffer.push(ch);
+                    if ctx.uart.print_stdout {
+                        print!("{}", ch as char);
+                        let _ = std::io::stdout().flush();
+                    }
+                }
+                true
+            },
+        ).map_err(|e| format!("Failed to add Debug UART write hook: {:?}", e))?;
+
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_DEBUG_UART_BASE,
+            SPRD_DEBUG_UART_BASE + SPRD_DEBUG_UART_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_DEBUG_UART_BASE) as u32;
+                let val: u32 = match offset {
+                    0x000C => 0x0000_0000, // STS0: TX FIFO empty
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add Debug UART read hook: {:?}", e))?;
+
+        // Setup SPRD AON System Timer Read Hook (0x4023_0000..0x4023_1000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_SYSTIMER_BASE,
+            SPRD_SYSTIMER_BASE + SPRD_SYSTIMER_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_SYSTIMER_BASE) as u32;
+                let val: u32 = match offset {
+                    0x0000 | 0x0004 | 0x000C => {
+                        // Monotonically advancing counter (1 tick per 16 instructions)
+                        (uc.get_data().instruction_count >> 4) as u32
+                    }
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add SYSTIMER read hook: {:?}", e))?;
+
+        // Setup SPRD Hardware SFC Hooks (0x21A0_0000..0x21A1_0000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_HW_SFC_BASE,
+            SPRD_HW_SFC_BASE + SPRD_HW_SFC_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_HW_SFC_BASE) as u32;
+                let mut cur = [0u8; 4];
+                let _ = uc.mem_read(addr, &mut cur);
+                let mut val = u32::from_le_bytes(cur);
+
+                match offset {
+                    0x0010 => {
+                        // SFC status: bit 24 = CMD_DONE (1), bit 27 = ERROR (0)
+                        val = 1 << 24;
+                    }
+                    0x019C => {
+                        // Winbond W25N01GV NAND Flash ID (NAND #58: 0xBAEF)
+                        val = 0x0000_BAEF;
+                    }
+                    _ => {}
+                }
+
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add HW SFC read hook: {:?}", e))?;
+
         // Setup Unmapped Trap Read/Write Hook for 0x4000_0000 range
         uc.add_mem_hook(
-            HookType::MEM_READ | HookType::MEM_WRITE,
-            TRAP_BASE,
-            TRAP_BASE + TRAP_SIZE as u64,
+            HookType::MEM_READ_UNMAPPED | HookType::MEM_WRITE_UNMAPPED,
+            0,
+            0xFFFF_FFFF,
             |uc, mem_type, addr, size, value| {
                 let pc = uc.reg_read(RegisterARM::PC).unwrap_or(0);
+                let page = addr & !0xFFF;
+                let _ = uc.mem_map(page, 0x1000, Prot::ALL);
                 let is_new = uc.get_data_mut().logged_traps.insert(addr as u32);
-                if mem_type == MemType::READ {
+                if mem_type == MemType::READ_UNMAPPED {
                     if is_new {
-                        println!("\n[N2660Emu MMIO TRAP] Unknown peripheral READ at 0x{:08X} (size {}) from PC 0x{:08X}", addr, size, pc);
+                        println!("\n[N2660Emu MMIO TRAP] Auto-mapped page at 0x{:08X} for unmapped READ at 0x{:08X} (size {}) from PC 0x{:08X}", page, addr, size, pc);
                         println!("[INFO] Unmapped MMIO read returned: 0x00000000\n");
                     }
                     let _ = uc.mem_write(addr, &vec![0u8; size]);
                 } else {
                     if is_new {
-                        println!("\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{:08X} (val 0x{:08X}, size {}) from PC 0x{:08X}\n", addr, value, size, pc);
+                        println!("\n[N2660Emu MMIO TRAP] Auto-mapped page at 0x{:08X} for unmapped WRITE at 0x{:08X} (val 0x{:08X}, size {}) from PC 0x{:08X}\n", page, addr, value as u32, size, pc);
                     }
                 }
                 true
@@ -316,46 +461,67 @@ impl T107Vm {
         &mut self,
         pac: &PacArchive,
         fdl1_addr: u64,
-        fdl2_addr: u64,
+        _fdl2_addr: u64,
         default_entry: u64,
     ) -> Result<Option<u64>, String> {
         let mut pac_boot_entry: Option<u64> = None;
+        let mut kernel_entry: Option<u64> = None;
+
         for f in &pac.files {
             let id_lower = f.id.to_lowercase();
-            if id_lower.contains("fdl1") {
-                println!("[PAC] Staging FDL1 partition ({} bytes) at 0x{:08X}", f.data.len(), fdl1_addr);
-                self.load_bytes(&f.data, fdl1_addr)?;
+            let is_dhtb = f.data.len() > 512 && &f.data[0..4] == b"DHTB";
+
+            if id_lower == "fdl" || id_lower.contains("fdl1") {
+                let load_target = fdl1_addr;
+                println!("[PAC] Staging FDL1 partition ({} bytes) at 0x{:08X}", f.data.len(), load_target);
+                self.load_bytes(&f.data, load_target)?;
             } else if id_lower.contains("fdl2") {
-                println!("[PAC] Staging FDL2 partition ({} bytes) at 0x{:08X}", f.data.len(), fdl2_addr);
-                self.load_bytes(&f.data, fdl2_addr)?;
+                println!("[PAC] Staging FDL2 partition ({} bytes) at 0x80020000", f.data.len());
+                let _ = self.load_bytes(&f.data, 0x8002_0000);
             } else if id_lower.contains("boot0") || id_lower.contains("spl") {
-                println!("[PAC] Staging BOOT0/SPL partition ({} bytes) into SPI NAND Block 0", f.data.len());
+                println!("[PAC] Staging BOOT0/SPL partition ({} bytes) into SPI NAND Block 0 & SRAM", f.data.len());
                 let chunk_len = f.data.len().min(2048);
                 self.uc.get_data_mut().sfc.write_page(0, 0, &f.data[..chunk_len]);
                 let _ = self.load_bytes(&f.data, FLASH_DIRECT_BASE);
-                if let Ok(hdr) = SprdHeader::parse(&f.data) {
+
+                // Stage into SRAM
+                let _ = self.load_bytes(&f.data, 0x0000_6200);
+
+                if is_dhtb {
+                    // Code begins at offset 512 (0x00006400)
+                    pac_boot_entry = Some(0x0000_6400);
+                } else if let Ok(hdr) = SprdHeader::parse(&f.data) {
                     if f.data.len() > 32 {
                         let _ = self.load_bytes(&f.data[32..], hdr.load_addr as u64);
                     }
                     pac_boot_entry = Some(hdr.entry_point as u64);
+                } else {
+                    pac_boot_entry = Some(0x0000_6200);
                 }
-            } else if id_lower.contains("boot") || id_lower.contains("kernel") || id_lower.contains("firmware") {
-                let load_addr = if f.load_addr != 0 { f.load_addr as u64 } else { default_entry };
+            } else if id_lower.contains("boot1") || id_lower.contains("lk") {
+                println!("[PAC] Staging BOOT1/LK partition ({} bytes) at 0x80100000", f.data.len());
+                let _ = self.load_bytes(&f.data, 0x8010_0000);
+            } else if id_lower.contains("kernel") || id_lower.contains("boot") || id_lower == "kernelimg" {
+                let load_addr = 0x8000_0000u64;
                 println!("[PAC] Staging Kernel/Boot partition '{}' ({} bytes) at 0x{:08X}", f.id, f.data.len(), load_addr);
-                self.load_bytes(&f.data, load_addr)?;
-                if pac_boot_entry.is_none() {
-                    pac_boot_entry = Some(load_addr);
+                if is_dhtb {
+                    self.load_bytes(&f.data[512..], load_addr)?;
+                } else {
+                    self.load_bytes(&f.data, load_addr)?;
                 }
-            } else if id_lower.contains("system") || id_lower.contains("rootfs") {
-                println!("[PAC] Staging System partition ({} bytes) into SPI NAND Flash", f.data.len());
+                kernel_entry = Some(load_addr);
+            } else if id_lower.contains("system") || id_lower.contains("rootfs") || id_lower.contains("userimg") || id_lower.contains("mmires") || id_lower.contains("nv") {
+                // Flash storage partitions
                 self.uc.get_data_mut().sfc.load_image(&f.data);
-            } else if f.load_addr != 0 {
-                // Secondary partitions with non-zero load address
+            } else if f.load_addr != 0 && f.load_addr < 0x8000_0000 && (f.load_addr & 0xFFFF_0000) != 0 {
+                // Secondary partitions with explicit non-tag physical address
                 println!("[PAC] Staging partition '{}' ({} bytes) at 0x{:08X}", f.id, f.data.len(), f.load_addr);
                 let _ = self.load_bytes(&f.data, f.load_addr as u64);
             }
         }
-        Ok(pac_boot_entry)
+
+        // Default boot entry priority: BOOT0 (cold boot SPL) > Kernel > default_entry
+        Ok(pac_boot_entry.or(kernel_entry).or(Some(default_entry)))
     }
 
     pub fn setup_atags(&mut self, atags_addr: u64, board_id: u32, cmdline: Option<String>) -> Result<(), String> {
@@ -376,7 +542,11 @@ impl T107Vm {
     }
 
     pub fn step(&mut self, count: usize, timeout_us: u64) -> Result<bool, String> {
-        let pc = self.uc.reg_read(RegisterARM::PC).unwrap_or(self.entry_point);
+        let mut pc = self.uc.reg_read(RegisterARM::PC).unwrap_or(self.entry_point);
+        let cpsr = self.uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+        if (cpsr & 0x20) != 0 {
+            pc |= 1;
+        }
         match self.uc.emu_start(pc, 0xFFFF_FFFF, timeout_us, count) {
             Ok(_) => Ok(true),
             Err(e) => {
@@ -384,7 +554,14 @@ impl T107Vm {
                 if err_str.contains("TIMEOUT") || err_str.contains("OK") {
                     Ok(true)
                 } else {
-                    Err(format!("Emulation error at PC 0x{:08X}: {:?}", pc, e))
+                    let lr = self.uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                    let sp = self.uc.reg_read(RegisterARM::SP).unwrap_or(0);
+                    let r0 = self.uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                    let r1 = self.uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                    let r2 = self.uc.reg_read(RegisterARM::R2).unwrap_or(0);
+                    let r3 = self.uc.reg_read(RegisterARM::R3).unwrap_or(0);
+                    let fault_pc = self.uc.reg_read(RegisterARM::PC).unwrap_or(pc);
+                    Err(format!("Emulation error at fault PC 0x{:08X} (initial PC 0x{:08X}, LR: 0x{:08X}, SP: 0x{:08X}, R0: 0x{:08X}, R1: 0x{:08X}, R2: 0x{:08X}, R3: 0x{:08X}, CPSR: 0x{:08X}): {:?}", fault_pc & !1, pc & !1, lr, sp, r0, r1, r2, r3, cpsr, e))
                 }
             }
         }
