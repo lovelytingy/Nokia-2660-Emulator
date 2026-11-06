@@ -40,6 +40,8 @@ Nokia-2660-Emulator/
 │   └── n2660emu                 # Symlink to main CLI orchestrator
 ├── docs/
 │   ├── ARCHITECTURE.md          # Complete emulator architecture & design
+│   ├── DESKTOP_GUI.md           # Native desktop host GUI & vector Nokia 2660 skin guide
+│   ├── INTERACTIVE_UI.md        # Real-time terminal GUI & T9 keypad matrix guide
 │   ├── ATAGS_AND_KERNEL_BOOT.md # ARM Boot Tags (ATAGS) & kernel handoff specification
 │   ├── MEMORY_MAP.md            # Verified memory map and peripheral registers
 │   ├── BOOT_FLOW.md             # BootROM reset vector, BOOT0 header & multi-stage boot flow
@@ -112,6 +114,7 @@ Nokia-2660-Emulator/
 │   │   ├── linker.ld            # Linker script targeting T107 memory map (with 4 KB IRQ stack)
 │   │   └── Makefile             # Built with arm-none-eabi-gcc
 │   └── unit/
+│       ├── test_desktop_gui.py  # Native desktop GUI, Cairo phone skin & hit-testing tests
 │       ├── test_gui_runner.py   # Interactive GUI, downsampling, key injection & headless tests
 │       ├── test_intc.py         # SPRD INTC registers, soft IRQ, FIQ routing & vector tests
 │       ├── test_atags.py        # ARM Boot Tags synthesizer, parser & handoff tests
@@ -120,6 +123,7 @@ Nokia-2660-Emulator/
 │       ├── test_memory_map.py   # Automated memory map & peripheral tests
 │       └── test_bsl_protocol.py # BSL protocol framing, CRC16, and FDL loader tests
 ├── tools/
+│   ├── desktop_gui.py           # Native Desktop Host GUI with authentic Nokia 2660 Flip skin
 │   ├── gui_runner.py            # Interactive Real-Time Terminal GUI & Keypad Runner
 │   ├── n2660emu.py              # Unified CLI emulator launcher
 │   ├── unicorn_runner.py        # Unicorn VM runner with exact T107 MMIO
@@ -230,7 +234,30 @@ Output:
 --------------------------------------------------------
 ```
 
-### 3. Interactive Real-Time Terminal GUI & Keypad (`make interactive` or `n2660emu -i`)
+### 3. Native Desktop Host GUI (`make gui` or `n2660emu --gui`)
+Launch the native desktop emulator window with an authentic vector-rendered **Nokia 2660 Flip physical skin**, interactive 3D-embossed keypad, clamshell flip simulation, hardware telemetry deck, and live serial console:
+```bash
+make gui
+# or via CLI launcher:
+./bin/n2660emu --gui
+
+# Custom casing color themes ("Deep Blue", "Classic Black", "Pop Red"):
+./bin/n2660emu --gui --theme "Pop Red"
+
+# Launch directly with clamshell closed:
+./bin/n2660emu --gui --flip closed
+```
+
+**Features & Controls in Desktop GUI Mode**:
+- **Interactive Vector Skin**: Hand-crafted Cairo vector model of the Nokia 2660 Flip with earpiece speaker, metallic chrome Nokia badge, glass screen reflections, dual metallic hinge, camera module, and LED flash.
+- **Dual Display Pipelines**: 240×320 QVGA main display (GalaxyCore GC9307) and 120×160 QQVGA outer sub-display (Sitronix ST7735) with 64K lookup-table acceleration.
+- **Tactile Keypad Interaction**: Click any physical button (SoftKeys, Call, End, D-Pad, OK, 0–9, *, #) with visual button depression, hardware MMIO matrix routing, and host click sound effects.
+- **Clamshell Flip Toggle (`f` or Toolbar Button)**: Switches between Open (main screen & keypad) and Closed (camera module & outer sub-display) while updating the hardware Hall effect sensor on GPIO Pin 0.
+- **Hardware Telemetry Deck**: Live CPU registers (PC, SP, LR, CPSR with mode decoding), instruction counter, dynamic MIPS execution speed, INTC raw/mask status, and hardware audio tone monitor.
+- **Bidirectional Serial Console**: Live scrollable output of firmware UART0 prints and an input entry box to inject commands into the virtual UART0 RX FIFO.
+- See [docs/DESKTOP_GUI.md](docs/DESKTOP_GUI.md) for full architecture and keyboard shortcuts.
+
+### 4. Interactive Real-Time Terminal GUI & Keypad (`make interactive` or `n2660emu -i`)
 Launch the real-time terminal user interface featuring 24-bit ANSI Truecolor dual-display rendering, visual T9 keypad matrix, hardware telemetry, and live serial console:
 ```bash
 make interactive
@@ -253,7 +280,7 @@ make interactive
 - **Step `t` / `s`**: Single-step 1 instruction / 1,000 instructions (when paused).
 - **Quit `q`**: Restores terminal and exits cleanly.
 
-### 4. Execute Hardware BootROM & Multi-Stage Boot (BOOT0 vs BSL)
+### 5. Execute Hardware BootROM & Multi-Stage Boot (BOOT0 vs BSL)
 Execute the clean-room ARMv7-A BootROM starting at the reset vector (`0x00000000`):
 ```bash
 # 1. Cold boot with BOOT0 image in SPI NAND Block 0:
@@ -266,27 +293,27 @@ Execute the clean-room ARMv7-A BootROM starting at the reset vector (`0x00000000
 ./bin/n2660emu --bootrom
 ```
 
-### 5. Package Raw Binaries into Unisoc SPRD BOOT0 Containers
+### 6. Package Raw Binaries into Unisoc SPRD BOOT0 Containers
 Use `tools/mksprd_img.py` to wrap any baremetal payload with standard 32-byte SPRD headers:
 ```bash
 python3 tools/mksprd_img.py create -i payload.bin -o boot0.bin --load-addr 0x00006200 --entry 0x00006200
 python3 tools/mksprd_img.py verify boot0.bin
 ```
 
-### 6. Simulate Keypad Input and Flip Opening / Closing
+### 7. Simulate Keypad Input and Flip Opening / Closing
 Simulate hardware key events and flip states dynamically via CLI arguments:
 ```bash
 # Simulate pressing '5' and 'OK' with clamshell closed:
 ./bin/n2660emu tests/baremetal/test_firmware.bin --flip closed --key 5 --key ok
 ```
 
-### 7. Mount Custom SPI NAND Flash Images
+### 8. Mount Custom SPI NAND Flash Images
 Mount external raw flash images, sparse partition dumps, or partitions extracted from vendor `.PAC` packages:
 ```bash
 ./bin/n2660emu tests/baremetal/test_firmware.bin --flash flash_dump.bin
 ```
 
-### 8. Execute FDL1 & Simulate BootROM BSL Download Handshake
+### 9. Execute FDL1 & Simulate BootROM BSL Download Handshake
 Load first-stage bootloader `fdl1.bin` into SRAM (`0x00006200`) and optionally simulate the Spreadtrum BSL HDLC protocol handshake over UART0:
 ```bash
 # Direct FDL1 staging into SRAM and execution:
@@ -299,19 +326,19 @@ Load first-stage bootloader `fdl1.bin` into SRAM (`0x00006200`) and optionally s
 ./bin/n2660emu --fdl1 extracted_fw/fdl1.bin --fdl2 extracted_fw/fdl2.bin --bsl
 ```
 
-### 9. Capture Audio and Buzzer Tones to WAV
+### 10. Capture Audio and Buzzer Tones to WAV
 Capture PCM audio playback and hardware buzzer tone generation to a standard 16-bit 44.1 kHz stereo WAV file:
 ```bash
 ./bin/n2660emu tests/baremetal/test_firmware.bin --audio-dump audio_capture.wav
 ```
 
-### 10. Run with Instruction Tracing
+### 11. Run with Instruction Tracing
 Trace CPU instructions as they execute in real time:
 ```bash
 make trace
 ```
 
-### 11. Render Primary and Secondary Sub-Displays
+### 12. Render Primary and Secondary Sub-Displays
 Render test graphics and dump high-resolution framebuffer PPM images:
 ```bash
 # Render and dump 240x320 main display:
@@ -321,12 +348,12 @@ make screen
 make sub-screen
 ```
 
-### 12. Run Automated Unit Tests
+### 13. Run Automated Unit Tests
 ```bash
 make test
 ```
 
-### 13. Disassemble Binary with Unisoc T107 Annotations
+### 14. Disassemble Binary with Unisoc T107 Annotations
 ```bash
 make disasm
 ```

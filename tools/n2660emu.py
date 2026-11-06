@@ -124,12 +124,33 @@ def run_interactive_gui(bin_path, entry_addr=0x80000000, flip="open", view="main
     res = subprocess.run(cmd)
     return res.returncode
 
+def run_desktop_gui(bin_path, entry_addr=0x80000000, flip="open", theme="Deep Blue"):
+    script_path = os.path.join(PROJECT_ROOT, "tools", "desktop_gui.py")
+    cmd = [
+        sys.executable,
+        script_path,
+        "--entry", hex(entry_addr),
+        "--flip", flip,
+        "--theme", theme
+    ]
+    if bin_path:
+        cmd.append(bin_path)
+    res = subprocess.run(cmd)
+    return res.returncode
+
 def main():
     parser = argparse.ArgumentParser(
         description="N2660Emu: Nokia 2660 Flip (Unisoc T107) Emulation Environment",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  Launch native Nokia 2660 Flip desktop skin GUI:
+    n2660emu --gui
+    n2660emu --gui --theme "Pop Red"
+
+  Launch interactive terminal TUI:
+    n2660emu -i
+
   Run baremetal test payload in Unicorn VM:
     n2660emu tests/baremetal/test_firmware.bin --engine unicorn
 
@@ -174,6 +195,10 @@ Examples:
     parser.add_argument("--cmdline", type=str, default=None, help="Kernel command line string passed via ATAG_CMDLINE")
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="Launch interactive terminal GUI with live LCD, keypad matrix, and telemetry")
+    parser.add_argument("-g", "--gui", action="store_true",
+                        help="Launch native desktop GUI with Nokia 2660 Flip physical skin, interactive keypad, and live telemetry")
+    parser.add_argument("--theme", choices=["Deep Blue", "Classic Black", "Pop Red"], default="Deep Blue",
+                        help="Physical casing color theme for desktop GUI (default: Deep Blue)")
     parser.add_argument("--view", choices=["main", "sub", "dual"], default="main",
                         help="Initial display view for interactive mode (default: main)")
     parser.add_argument("--fps", type=int, default=30, help="Target UI refresh rate for interactive mode (default: 30)")
@@ -181,6 +206,24 @@ Examples:
     args, unknown = parser.parse_known_args()
 
     fw_path = os.path.abspath(args.firmware) if args.firmware else None
+
+    # Native Desktop Host GUI Mode
+    if args.gui:
+        demo_fw = fw_path
+        if not demo_fw:
+            candidates = [
+                os.path.join(PROJECT_ROOT, "tests", "baremetal", "interactive_demo.bin"),
+                os.path.join(PROJECT_ROOT, "tests", "baremetal", "test_firmware.bin")
+            ]
+            for c in candidates:
+                if os.path.isfile(c):
+                    demo_fw = c
+                    break
+        if not demo_fw:
+            print("Error: No firmware specified for desktop GUI mode and default binary not found.")
+            sys.exit(1)
+        ret = run_desktop_gui(demo_fw, entry_addr=args.entry, flip=args.flip, theme=args.theme)
+        sys.exit(ret)
 
     # Interactive Terminal GUI Mode
     if args.interactive:

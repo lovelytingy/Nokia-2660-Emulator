@@ -19,6 +19,9 @@ run: firmware
 interactive: firmware
 	./bin/n2660emu -i
 
+gui: firmware
+	./bin/n2660emu --gui
+
 trace: firmware
 	./bin/n2660emu tests/baremetal/test_firmware.bin --engine unicorn --trace
 
@@ -36,4 +39,4 @@ clean:
 	$(MAKE) -C roms clean
 	rm -rf build __pycache__ tools/__pycache__ tests/unit/__pycache__ roms/__pycache__
 
-.PHONY: all firmware test run trace disasm clean
+.PHONY: all firmware bootrom test run interactive gui trace screen sub-screen disasm clean
