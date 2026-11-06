@@ -80,3 +80,51 @@ The Nokia 2660 Flip primary screen is a 2.8-inch QVGA (240x320) TFT LCD driven b
 - **Resolution**: 240 x 320 pixels
 - **Color Depth**: RGB565 (16 bits per pixel)
 - **Outer Secondary Display**: 1.77-inch QQVGA (120x160 pixels)
+
+---
+
+## 5. SPRD Keypad Controller (KPD) & Hall Effect Flip Sensor
+
+The Nokia 2660 Flip incorporates an 8x8 matrix keypad interface and a Hall-effect magnetic lid switch for detecting flip opening and closure.
+
+### Keypad Matrix Controller
+- **Base Address**: `0x50060000`
+- **Register Map**:
+| Offset | Register Name | Description | Access | Reset |
+| :--- | :--- | :--- | :--- | :--- |
+| `+0x0000` | `SPRD_KPD_CTRL` | Control Register (Bit 0: Controller Enable, Bits 1-7: Debounce) | R/W | `0x00000000` |
+| `+0x0004` | `SPRD_KPD_INT_EN` | Interrupt Enable (Bit 0: Key Event Interrupt) | R/W | `0x00000000` |
+| `+0x0008` | `SPRD_KPD_INT_RAW_STS` | Raw Interrupt Status | R | `0x00000000` |
+| `+0x000C` | `SPRD_KPD_INT_MASK_STS` | Masked Interrupt Status (`RAW & EN`) | R | `0x00000000` |
+| `+0x0010` | `SPRD_KPD_INT_CLR` | Interrupt Clear (Write `1` to clear) | W | `0x00000000` |
+| `+0x0014` | `SPRD_KPD_POLARITY` | Key Scan Polarity | R/W | `0x00000000` |
+| `+0x0018` | `SPRD_KPD_CLK_DIV` | Scan Clock Divider | R/W | `0x00000000` |
+| `+0x001C` | `SPRD_KPD_STATUS0` | Key Matrix Status Register 0 (Keys 0–15) | R | `0x00000000` |
+| `+0x0020` | `SPRD_KPD_STATUS1` | Key Matrix Status Register 1 (Keys 16–31) | R | `0x00000000` |
+
+### Nokia 2660 Key Map & Bit Allocation
+| Key Name | Code | Register | Bit | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `0` - `9` | `0` - `9` | `STATUS0` | Bits `0` - `9` | Numeric keypad digits |
+| `*` (Star) | `10` | `STATUS0` | Bit `10` | Star key |
+| `#` (Hash) | `11` | `STATUS0` | Bit `11` | Hash / Lock key |
+| `UP` | `12` | `STATUS0` | Bit `12` | D-pad Up |
+| `DOWN` | `13` | `STATUS0` | Bit `13` | D-pad Down |
+| `LEFT` | `14` | `STATUS0` | Bit `14` | D-pad Left |
+| `RIGHT` | `15` | `STATUS0` | Bit `15` | D-pad Right |
+| `OK` | `16` | `STATUS1` | Bit `0` | D-pad Center / Select |
+| `LSK` | `17` | `STATUS1` | Bit `1` | Left Softkey |
+| `RSK` | `18` | `STATUS1` | Bit `2` | Right Softkey |
+| `CALL` | `19` | `STATUS1` | Bit `3` | Green Call key |
+| `END` / `POWER` | `20` | `STATUS1` | Bit `4` | Red End / Power key |
+| `SOS` | `21` | `STATUS1` | Bit `5` | Rear Emergency Button |
+| `VOL_UP` | `22` | `STATUS1` | Bit `6` | Side Volume Up |
+| `VOL_DOWN` | `23` | `STATUS1` | Bit `7` | Side Volume Down |
+
+### Hall Effect Flip Sensor
+- **Interface**: GPIO Bank 0, Pin 0 (`SPRD_GPIO_BASE + 0x0000`).
+- **Signal Logic**:
+  - `High (1)`: Flip Open (main screen active, keypad enabled).
+  - `Low (0)`: Flip Closed (clamshell shut, outer sub-display active).
+- **Interrupts**: Configured via SPRD GPIO Bank 0 interrupt sense and event registers to trigger wake-on-open and sleep-on-close events in MOCOR OS.
+

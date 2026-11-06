@@ -58,6 +58,31 @@ GPIO_DMSK        = 0x0004
 GPIO_DIR         = 0x0008
 GPIO_INEN        = 0x0028
 
+SPRD_KPD_BASE    = 0x50060000
+KPD_CTRL         = 0x0000
+KPD_INT_EN       = 0x0004
+KPD_INT_RAW      = 0x0008
+KPD_INT_MASK     = 0x000C
+KPD_INT_CLR      = 0x0010
+KPD_POLARITY     = 0x0014
+KPD_CLK_DIV      = 0x0018
+KPD_STATUS0      = 0x001C
+KPD_STATUS1      = 0x0020
+
+# Nokia 2660 Key Map (Key code -> Bit offset)
+NOKIA_KEYS = {
+    '0': 0, '1': 1, '2': 2, '3': 3, '4': 4,
+    '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+    '*': 10, 'star': 10,
+    '#': 11, 'hash': 11,
+    'up': 12, 'down': 13, 'left': 14, 'right': 15,
+    'ok': 16, 'center': 16,
+    'lsk': 17, 'rsk': 18,
+    'call': 19, 'end': 20, 'power': 20,
+    'sos': 21,
+    'vol_up': 22, 'vol_down': 23,
+}
+
 SPRD_SPI0_BASE   = 0x50080000
 SPI_TXD          = 0x0000
 SPI_CLKD         = 0x0004
@@ -92,6 +117,15 @@ class T107UnicornVM:
         self.gpio_dir = 0
         self.gpio_inen = 0
 
+        # Keypad Matrix State
+        self.kpd_ctrl = 0
+        self.kpd_int_en = 0
+        self.kpd_int_raw = 0
+        self.kpd_polarity = 0
+        self.kpd_clk_div = 0
+        self.kpd_status0 = 0
+        self.kpd_status1 = 0
+
         # GalaxyCore GC9307 LCD Display State (240x320 RGB565)
         self.framebuffer = [[0 for _ in range(GC9307_WIDTH)] for _ in range(GC9307_HEIGHT)]
         self.lcd_sleep = True
@@ -117,10 +151,11 @@ class T107UnicornVM:
         self.dram_map_size = 16 * 1024 * 1024
         self.uc.mem_map(DRAM_BASE, self.dram_map_size)
 
-        # 3. Peripheral MMIO space (map pages for SPRD UART, Timers, GPIO, SPI0, PL011)
+        # 3. Peripheral MMIO space (map pages for SPRD UART, Timers, GPIO, KPD, SPI0, PL011)
         self.uc.mem_map(SPRD_UART0_BASE, 0x1000)
         self.uc.mem_map(SPRD_TIMERS_BASE, 0x1000)
         self.uc.mem_map(SPRD_GPIO_BASE, 0x1000)
+        self.uc.mem_map(SPRD_KPD_BASE, 0x1000)
         self.uc.mem_map(SPRD_SPI0_BASE, 0x1000)
         self.uc.mem_map(PL011_UART_BASE, 0x1000)
         # Also map page around 0x40001000 to test unmapped traps
@@ -243,7 +278,23 @@ class T107UnicornVM:
                                     self.lcd_cur_y = self.lcd_row_start
             return
 
-        # 5. Catch-all unknown peripheral writes
+        # 5. SPRD Keypad Matrix Controller
+        if SPRD_KPD_BASE <= address < (SPRD_KPD_BASE + 0x1000):
+            offset = address - SPRD_KPD_BASE
+            if offset == KPD_CTRL:
+                self.kpd_ctrl = value & 0xFFFFFFFF
+            elif offset == KPD_INT_EN:
+                self.kpd_int_en = value & 0xFFFFFFFF
+            elif offset == KPD_INT_CLR:
+                if value & 0x1:
+                    self.kpd_int_raw &= ~0x1
+            elif offset == KPD_POLARITY:
+                self.kpd_polarity = value & 0xFFFFFFFF
+            elif offset == KPD_CLK_DIV:
+                self.kpd_clk_div = value & 0xFFFFFFFF
+            return
+
+        # 6. Catch-all unknown peripheral writes
         if 0x40000000 <= address < 0x60000000:
             pc = uc.reg_read(UC_ARM_REG_PC)
             print(f"\n[N2660Emu MMIO TRAP] Unknown peripheral WRITE at 0x{address:08X} = 0x{value:08X} (size {size}) from PC 0x{pc:08X}")
@@ -290,7 +341,31 @@ class T107UnicornVM:
                 uc.mem_write(address, (self.gpio_inen & 0xFFFFFFFF).to_bytes(4, 'little'))
                 return
 
-        # 4. SPRD SPI0 Controller Status
+        # 4. SPRD Keypad Matrix Controller
+        if SPRD_KPD_BASE <= address < (SPRD_KPD_BASE + 0x1000):
+            offset = address - SPRD_KPD_BASE
+            if offset == KPD_CTRL:
+                val = self.kpd_ctrl
+            elif offset == KPD_INT_EN:
+                val = self.kpd_int_en
+            elif offset == KPD_INT_RAW:
+                val = self.kpd_int_raw
+            elif offset == KPD_INT_MASK:
+                val = self.kpd_int_raw & self.kpd_int_en
+            elif offset == KPD_POLARITY:
+                val = self.kpd_polarity
+            elif offset == KPD_CLK_DIV:
+                val = self.kpd_clk_div
+            elif offset == KPD_STATUS0:
+                val = self.kpd_status0
+            elif offset == KPD_STATUS1:
+                val = self.kpd_status1
+            else:
+                val = 0
+            uc.mem_write(address, (val & 0xFFFFFFFF).to_bytes(4, 'little'))
+            return
+
+        # 5. SPRD SPI0 Controller Status
         if SPRD_SPI0_BASE <= address < (SPRD_SPI0_BASE + 0x1000):
             offset = address - SPRD_SPI0_BASE
             if offset == SPI_STS1:
@@ -336,6 +411,33 @@ class T107UnicornVM:
         print("[VM] Emulation finished cleanly.")
         return True
 
+    def inject_key(self, key_name, pressed=True):
+        """Simulate pressing or releasing a key on the Nokia 2660 keypad matrix."""
+        key_id = NOKIA_KEYS.get(str(key_name).lower())
+        if key_id is None:
+            raise ValueError(f"Unknown key name '{key_name}'. Supported: {list(NOKIA_KEYS.keys())}")
+        bit = 1 << (key_id % 16)
+        if key_id < 16:
+            if pressed:
+                self.kpd_status0 |= bit
+            else:
+                self.kpd_status0 &= ~bit
+        else:
+            if pressed:
+                self.kpd_status1 |= bit
+            else:
+                self.kpd_status1 &= ~bit
+
+        if pressed:
+            self.kpd_int_raw |= 0x1
+
+    def set_flip_state(self, is_open: bool):
+        """Set Hall effect flip sensor state (GPIO Bank 0 Pin 0: 1=Open, 0=Closed)."""
+        if is_open:
+            self.gpio_data_in |= 0x00000001
+        else:
+            self.gpio_data_in &= ~0x00000001
+
     def export_ppm(self, file_path):
         """Exports 240x320 framebuffer as standard PPM image."""
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
@@ -379,6 +481,8 @@ def main():
     parser.add_argument("--timeout", type=int, default=5, help="Timeout in seconds")
     parser.add_argument("--screen-dump", type=str, default=None, help="Path to dump framebuffer image (.ppm)")
     parser.add_argument("--preview-screen", action="store_true", help="Render ANSI truecolor screen preview in terminal")
+    parser.add_argument("--key", type=str, action="append", help="Inject key press (e.g. --key 5 or --key ok)")
+    parser.add_argument("--flip", choices=["open", "closed"], default="open", help="Hall effect flip sensor initial state (default: open)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.binary):
@@ -386,6 +490,12 @@ def main():
         sys.exit(1)
 
     vm = T107UnicornVM(trace_instructions=args.trace, max_instructions=args.max_insns)
+    vm.set_flip_state(args.flip == "open")
+
+    if args.key:
+        for k in args.key:
+            vm.inject_key(k, pressed=True)
+
     vm.load_binary(args.binary, args.entry)
     success = vm.run(entry_point=args.entry, timeout_sec=args.timeout)
 

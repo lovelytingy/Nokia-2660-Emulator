@@ -27,6 +27,7 @@ from tools.unicorn_runner import (
     SPRD_UART0_BASE, SPRD_TXD_REG, SPRD_STS1_REG,
     SPRD_TIMERS_BASE, TIMER_LOAD_LO, TIMER_VALUE_LO, TIMER_CTL,
     SPRD_GPIO_BASE, GPIO_DATA, GPIO_DIR,
+    SPRD_KPD_BASE, KPD_CTRL, KPD_INT_EN, KPD_INT_RAW, KPD_STATUS0, KPD_STATUS1,
     SPRD_SPI0_BASE, GC9307_WIDTH, GC9307_HEIGHT,
     T107UnicornVM
 )
@@ -58,6 +59,44 @@ class TestN2660EmuMemoryMap(unittest.TestCase):
         self.assertEqual(SPRD_GPIO_BASE, 0x50040000)
         self.assertEqual(GPIO_DATA, 0x0000)
         self.assertEqual(GPIO_DIR, 0x0008)
+
+    def test_sprd_kpd_registers(self):
+        self.assertEqual(SPRD_KPD_BASE, 0x50060000)
+        self.assertEqual(KPD_CTRL, 0x0000)
+        self.assertEqual(KPD_INT_EN, 0x0004)
+        self.assertEqual(KPD_INT_RAW, 0x0008)
+        self.assertEqual(KPD_STATUS0, 0x001C)
+        self.assertEqual(KPD_STATUS1, 0x0020)
+
+    def test_keypad_injection_and_flip_sensor(self):
+        vm = T107UnicornVM(trace_instructions=False)
+        # Flip sensor verification
+        self.assertEqual(vm.gpio_data_in & 0x1, 1, "Default flip state should be OPEN")
+        vm.set_flip_state(False)
+        self.assertEqual(vm.gpio_data_in & 0x1, 0, "Flip state should be CLOSED")
+        vm.set_flip_state(True)
+        self.assertEqual(vm.gpio_data_in & 0x1, 1, "Flip state should be OPEN")
+
+        # Keypad matrix injection verification
+        self.assertEqual(vm.kpd_status0, 0)
+        self.assertEqual(vm.kpd_status1, 0)
+
+        # Press key '5' (key code 5 -> bit 5 of STATUS0)
+        vm.inject_key('5', pressed=True)
+        self.assertEqual(vm.kpd_status0, (1 << 5))
+        self.assertEqual(vm.kpd_int_raw & 0x1, 1)
+
+        # Release key '5'
+        vm.inject_key('5', pressed=False)
+        self.assertEqual(vm.kpd_status0, 0)
+
+        # Press navigation key 'ok' (key code 16 -> bit 0 of STATUS1)
+        vm.inject_key('ok', pressed=True)
+        self.assertEqual(vm.kpd_status1, (1 << 0))
+
+        # Press emergency key 'sos' (key code 21 -> bit 5 of STATUS1)
+        vm.inject_key('sos', pressed=True)
+        self.assertEqual(vm.kpd_status1, (1 << 0) | (1 << 5))
 
     def test_sprd_spi_and_gc9307_display(self):
         self.assertEqual(SPRD_SPI0_BASE, 0x50080000)

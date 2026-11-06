@@ -16,6 +16,7 @@
 #include "hw/gpio/sprd_gpio.h"
 #include "hw/ssi/sprd_spi.h"
 #include "hw/display/gc9307.h"
+#include "hw/input/sprd_kpd.h"
 #include "hw/boards.h"
 
 #define TYPE_T107_SOC "t107-soc"
@@ -39,6 +40,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Nokia2660MachineState, NOKIA_2660_MACHINE)
 #define T107_UART2_BASE           0x50020000
 #define T107_TIMERS_BASE          0x50030000
 #define T107_GPIO_BASE            0x50040000
+#define T107_KPD_BASE             0x50060000        /* Keypad Matrix Controller */
 #define T107_SPI0_BASE            0x50080000        /* GC9307 Display interface */
 
 #define T107_NUM_UARTS            3
@@ -57,6 +59,7 @@ struct T107SocState {
     SprdUartState uart[T107_NUM_UARTS];
     SprdTimerState timer;
     SprdGpioState gpio;
+    SprdKpdState kpd;
     SprdSPIState spi;
     GC9307State lcd;
 };
