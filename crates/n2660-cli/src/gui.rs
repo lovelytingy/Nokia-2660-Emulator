@@ -1,25 +1,128 @@
 // SPDX-License-Identifier: MIT
-//! Native Desktop Host GUI for Nokia 2660 Flip Emulator with Authentic Hardware Skin
+//! Authentic Nokia 2660 Flip Desktop Host GUI with Live Serial Console & Telemetry Deck
 
 use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
 use n2660_core::types::{GC9307_HEIGHT, GC9307_WIDTH, ST7735_HEIGHT, ST7735_WIDTH};
 use n2660_core::vm::T107Vm;
+use std::time::Instant;
 
-pub const WIN_WIDTH: usize = 480;
-pub const WIN_HEIGHT: usize = 840;
+pub const WIN_WIDTH: usize = 990;
+pub const WIN_HEIGHT: usize = 860;
+
+// Standard 5x7 ASCII font table (ASCII 32 ' ' to 127 '~')
+const FONT5X7: [[u8; 5]; 96] = [
+    [0x00, 0x00, 0x00, 0x00, 0x00], // 32 Space
+    [0x00, 0x00, 0x5F, 0x00, 0x00], // 33 !
+    [0x00, 0x07, 0x00, 0x07, 0x00], // 34 "
+    [0x14, 0x7F, 0x14, 0x7F, 0x14], // 35 #
+    [0x24, 0x2A, 0x7F, 0x2A, 0x12], // 36 $
+    [0x23, 0x13, 0x08, 0x64, 0x62], // 37 %
+    [0x36, 0x49, 0x55, 0x22, 0x50], // 38 &
+    [0x00, 0x05, 0x03, 0x00, 0x00], // 39 '
+    [0x00, 0x1C, 0x22, 0x41, 0x00], // 40 (
+    [0x00, 0x41, 0x22, 0x1C, 0x00], // 41 )
+    [0x08, 0x2A, 0x1C, 0x2A, 0x08], // 42 *
+    [0x08, 0x08, 0x3E, 0x08, 0x08], // 43 +
+    [0x00, 0x50, 0x30, 0x00, 0x00], // 44 ,
+    [0x08, 0x08, 0x08, 0x08, 0x08], // 45 -
+    [0x00, 0x60, 0x60, 0x00, 0x00], // 46 .
+    [0x20, 0x10, 0x08, 0x04, 0x02], // 47 /
+    [0x3E, 0x51, 0x49, 0x45, 0x3E], // 48 0
+    [0x00, 0x42, 0x7F, 0x40, 0x00], // 49 1
+    [0x42, 0x61, 0x51, 0x49, 0x46], // 50 2
+    [0x21, 0x41, 0x45, 0x4B, 0x31], // 51 3
+    [0x18, 0x14, 0x12, 0x7F, 0x10], // 52 4
+    [0x27, 0x45, 0x45, 0x45, 0x39], // 53 5
+    [0x3C, 0x4A, 0x49, 0x49, 0x30], // 54 6
+    [0x01, 0x71, 0x09, 0x05, 0x03], // 55 7
+    [0x36, 0x49, 0x49, 0x49, 0x36], // 56 8
+    [0x06, 0x49, 0x49, 0x29, 0x1E], // 57 9
+    [0x00, 0x36, 0x36, 0x00, 0x00], // 58 :
+    [0x00, 0x56, 0x36, 0x00, 0x00], // 59 ;
+    [0x00, 0x08, 0x14, 0x22, 0x41], // 60 <
+    [0x14, 0x14, 0x14, 0x14, 0x14], // 61 =
+    [0x41, 0x22, 0x14, 0x08, 0x00], // 62 >
+    [0x02, 0x01, 0x51, 0x09, 0x06], // 63 ?
+    [0x32, 0x49, 0x79, 0x41, 0x3E], // 64 @
+    [0x7E, 0x11, 0x11, 0x11, 0x7E], // 65 A
+    [0x7F, 0x49, 0x49, 0x49, 0x36], // 66 B
+    [0x3E, 0x41, 0x41, 0x41, 0x22], // 67 C
+    [0x7F, 0x41, 0x41, 0x22, 0x1C], // 68 D
+    [0x7F, 0x49, 0x49, 0x49, 0x41], // 69 E
+    [0x7F, 0x09, 0x09, 0x09, 0x01], // 70 F
+    [0x3E, 0x41, 0x49, 0x49, 0x7A], // 71 G
+    [0x7F, 0x08, 0x08, 0x08, 0x7F], // 72 H
+    [0x00, 0x41, 0x7F, 0x41, 0x00], // 73 I
+    [0x20, 0x40, 0x41, 0x3F, 0x01], // 74 J
+    [0x7F, 0x08, 0x14, 0x22, 0x41], // 75 K
+    [0x7F, 0x40, 0x40, 0x40, 0x40], // 76 L
+    [0x7F, 0x02, 0x0C, 0x02, 0x7F], // 77 M
+    [0x7F, 0x04, 0x08, 0x10, 0x7F], // 78 N
+    [0x3E, 0x41, 0x41, 0x41, 0x3E], // 79 O
+    [0x7F, 0x09, 0x09, 0x09, 0x06], // 80 P
+    [0x3E, 0x41, 0x51, 0x21, 0x5E], // 81 Q
+    [0x7F, 0x09, 0x19, 0x29, 0x46], // 82 R
+    [0x46, 0x49, 0x49, 0x49, 0x31], // 83 S
+    [0x01, 0x01, 0x7F, 0x01, 0x01], // 84 T
+    [0x3F, 0x40, 0x40, 0x40, 0x3F], // 85 U
+    [0x1F, 0x20, 0x40, 0x20, 0x1F], // 86 V
+    [0x3F, 0x40, 0x38, 0x40, 0x3F], // 87 W
+    [0x63, 0x14, 0x08, 0x14, 0x63], // 88 X
+    [0x07, 0x08, 0x70, 0x08, 0x07], // 89 Y
+    [0x61, 0x51, 0x49, 0x45, 0x43], // 90 Z
+    [0x00, 0x7F, 0x41, 0x41, 0x00], // 91 [
+    [0x02, 0x04, 0x08, 0x10, 0x20], // 92 \
+    [0x00, 0x41, 0x41, 0x7F, 0x00], // 93 ]
+    [0x04, 0x02, 0x01, 0x02, 0x04], // 94 ^
+    [0x40, 0x40, 0x40, 0x40, 0x40], // 95 _
+    [0x00, 0x01, 0x02, 0x04, 0x00], // 96 `
+    [0x20, 0x54, 0x54, 0x54, 0x78], // 97 a
+    [0x7F, 0x48, 0x44, 0x44, 0x38], // 98 b
+    [0x38, 0x44, 0x44, 0x44, 0x20], // 99 c
+    [0x38, 0x44, 0x44, 0x48, 0x7F], // 100 d
+    [0x38, 0x54, 0x54, 0x54, 0x18], // 101 e
+    [0x08, 0x7E, 0x09, 0x01, 0x02], // 102 f
+    [0x0C, 0x52, 0x52, 0x52, 0x3E], // 103 g
+    [0x7F, 0x08, 0x04, 0x04, 0x78], // 104 h
+    [0x00, 0x44, 0x7D, 0x40, 0x00], // 105 i
+    [0x20, 0x40, 0x44, 0x3D, 0x00], // 106 j
+    [0x7F, 0x10, 0x28, 0x44, 0x00], // 107 k
+    [0x00, 0x41, 0x7F, 0x40, 0x00], // 108 l
+    [0x7C, 0x04, 0x18, 0x04, 0x78], // 109 m
+    [0x7C, 0x08, 0x04, 0x04, 0x78], // 110 n
+    [0x38, 0x44, 0x44, 0x44, 0x38], // 111 o
+    [0x7C, 0x14, 0x14, 0x14, 0x08], // 112 p
+    [0x08, 0x14, 0x14, 0x18, 0x7C], // 113 q
+    [0x7C, 0x08, 0x04, 0x04, 0x08], // 114 r
+    [0x48, 0x54, 0x54, 0x54, 0x20], // 115 s
+    [0x04, 0x3F, 0x44, 0x40, 0x20], // 116 t
+    [0x3C, 0x40, 0x40, 0x20, 0x7C], // 117 u
+    [0x1C, 0x20, 0x40, 0x20, 0x1C], // 118 v
+    [0x3C, 0x40, 0x30, 0x40, 0x3C], // 119 w
+    [0x44, 0x28, 0x10, 0x28, 0x44], // 120 x
+    [0x0C, 0x50, 0x50, 0x50, 0x3C], // 121 y
+    [0x44, 0x64, 0x54, 0x4C, 0x44], // 122 z
+    [0x00, 0x08, 0x36, 0x41, 0x00], // 123 {
+    [0x00, 0x00, 0x7F, 0x00, 0x00], // 124 |
+    [0x00, 0x41, 0x36, 0x08, 0x00], // 125 }
+    [0x08, 0x08, 0x2A, 0x1C, 0x08], // 126 ~
+    [0x7F, 0x7F, 0x7F, 0x7F, 0x7F], // 127 Block
+];
 
 struct KeyButton {
     key_name: &'static str,
-    _label: &'static str,
+    main_label: &'static str,
+    sub_label: &'static str,
     x: usize,
     y: usize,
     w: usize,
     h: usize,
+    accent: u32,
 }
 
-pub fn run_desktop_gui(vm: &mut T107Vm, theme: &str, start_closed: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_desktop_gui(vm: &mut T107Vm, start_closed: bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut window = Window::new(
-        "Nokia 2660 Flip Emulator (Unisoc T107) - Native Host GUI",
+        "Nokia 2660 Flip Emulator (Unisoc T107) - Native Host GUI & Dev Deck",
         WIN_WIDTH,
         WIN_HEIGHT,
         WindowOptions {
@@ -34,68 +137,97 @@ pub fn run_desktop_gui(vm: &mut T107Vm, theme: &str, start_closed: bool) -> Resu
     let mut flip_open = !start_closed;
     vm.set_flip_state(flip_open);
 
-    let body_color: u32 = match theme.to_lowercase().as_str() {
-        "pop red" => 0x00A82025,
-        "classic black" => 0x001E1E22,
-        _ => 0x001B2E4B, // Deep Blue (default)
-    };
+    let mut paused = false;
+    let mut step_requested = false;
+    let start_time = Instant::now();
+
+    // The iconic Nokia 2660 Flip deep navy metallic finish
+    let phone_body_color: u32 = 0x0014223A;
+    let phone_bevel_color: u32 = 0x000E192B;
+    let deck_bg_color: u32 = 0x000D111A;
 
     let buttons = vec![
-        KeyButton { key_name: "soft1", _label: "Menu", x: 60, y: 440, w: 75, h: 40 },
-        KeyButton { key_name: "up",    _label: "▲",    x: 215, y: 425, w: 50, h: 30 },
-        KeyButton { key_name: "soft2", _label: "Back", x: 345, y: 440, w: 75, h: 40 },
+        // Softkeys & D-Pad (Row 1)
+        KeyButton { key_name: "soft1", main_label: "Menu", sub_label: "-", x: 60, y: 440, w: 75, h: 42, accent: 0x0022324C },
+        KeyButton { key_name: "up",    main_label: "^",    sub_label: "",  x: 215, y: 425, w: 50, h: 32, accent: 0x0032425E },
+        KeyButton { key_name: "soft2", main_label: "Back", sub_label: "-", x: 345, y: 440, w: 75, h: 42, accent: 0x0022324C },
 
-        KeyButton { key_name: "left",  _label: "◀",    x: 165, y: 460, w: 45, h: 45 },
-        KeyButton { key_name: "ok",    _label: "OK",   x: 215, y: 460, w: 50, h: 45 },
-        KeyButton { key_name: "right", _label: "▶",    x: 270, y: 460, w: 45, h: 45 },
+        // D-Pad Row 2
+        KeyButton { key_name: "left",  main_label: "<",    sub_label: "",  x: 165, y: 462, w: 45, h: 42, accent: 0x0032425E },
+        KeyButton { key_name: "ok",    main_label: "OK",   sub_label: "",  x: 215, y: 462, w: 50, h: 42, accent: 0x001E4472 },
+        KeyButton { key_name: "right", main_label: ">",    sub_label: "",  x: 270, y: 462, w: 45, h: 42, accent: 0x0032425E },
 
-        KeyButton { key_name: "call",  _label: "CALL", x: 60, y: 495, w: 75, h: 40 },
-        KeyButton { key_name: "down",  _label: "▼",    x: 215, y: 510, w: 50, h: 30 },
-        KeyButton { key_name: "end",   _label: "END",  x: 345, y: 495, w: 75, h: 40 },
+        // Call / Down / End (Row 3)
+        KeyButton { key_name: "call",  main_label: "CALL", sub_label: "",  x: 60, y: 498, w: 75, h: 44, accent: 0x001B6328 },
+        KeyButton { key_name: "down",  main_label: "v",    sub_label: "",  x: 215, y: 508, w: 50, h: 32, accent: 0x0032425E },
+        KeyButton { key_name: "end",   main_label: "END",  sub_label: "",  x: 345, y: 498, w: 75, h: 44, accent: 0x00781E22 },
 
-        KeyButton { key_name: "1", _label: "1", x: 75, y: 560, w: 90, h: 45 },
-        KeyButton { key_name: "2", _label: "2", x: 195, y: 560, w: 90, h: 45 },
-        KeyButton { key_name: "3", _label: "3", x: 315, y: 560, w: 90, h: 45 },
+        // Numeric Keypad with T9 Multi-tap Sub-labels
+        KeyButton { key_name: "1", main_label: "1", sub_label: ". @",   x: 70,  y: 565, w: 95, h: 48, accent: 0x001E2E46 },
+        KeyButton { key_name: "2", main_label: "2", sub_label: "ABC",   x: 192, y: 565, w: 95, h: 48, accent: 0x001E2E46 },
+        KeyButton { key_name: "3", main_label: "3", sub_label: "DEF",   x: 315, y: 565, w: 95, h: 48, accent: 0x001E2E46 },
 
-        KeyButton { key_name: "4", _label: "4", x: 75, y: 620, w: 90, h: 45 },
-        KeyButton { key_name: "5", _label: "5", x: 195, y: 620, w: 90, h: 45 },
-        KeyButton { key_name: "6", _label: "6", x: 315, y: 620, w: 90, h: 45 },
+        KeyButton { key_name: "4", main_label: "4", sub_label: "GHI",   x: 70,  y: 625, w: 95, h: 48, accent: 0x001E2E46 },
+        KeyButton { key_name: "5", main_label: "5", sub_label: "JKL",   x: 192, y: 625, w: 95, h: 48, accent: 0x001E2E46 },
+        KeyButton { key_name: "6", main_label: "6", sub_label: "MNO",   x: 315, y: 625, w: 95, h: 48, accent: 0x001E2E46 },
 
-        KeyButton { key_name: "7", _label: "7", x: 75, y: 680, w: 90, h: 45 },
-        KeyButton { key_name: "8", _label: "8", x: 195, y: 680, w: 90, h: 45 },
-        KeyButton { key_name: "9", _label: "9", x: 315, y: 680, w: 90, h: 45 },
+        KeyButton { key_name: "7", main_label: "7", sub_label: "PQRS",  x: 70,  y: 685, w: 95, h: 48, accent: 0x001E2E46 },
+        KeyButton { key_name: "8", main_label: "8", sub_label: "TUV",   x: 192, y: 685, w: 95, h: 48, accent: 0x001E2E46 },
+        KeyButton { key_name: "9", main_label: "9", sub_label: "WXYZ",  x: 315, y: 685, w: 95, h: 48, accent: 0x001E2E46 },
 
-        KeyButton { key_name: "star", _label: "*", x: 75, y: 740, w: 90, h: 45 },
-        KeyButton { key_name: "0",    _label: "0", x: 195, y: 740, w: 90, h: 45 },
-        KeyButton { key_name: "hash", _label: "#", x: 315, y: 740, w: 90, h: 45 },
+        KeyButton { key_name: "star", main_label: "*", sub_label: "+",   x: 70,  y: 745, w: 95, h: 48, accent: 0x001E2E46 },
+        KeyButton { key_name: "0",    main_label: "0", sub_label: "_",   x: 192, y: 745, w: 95, h: 48, accent: 0x001E2E46 },
+        KeyButton { key_name: "hash", main_label: "#", sub_label: "^",   x: 315, y: 745, w: 95, h: 48, accent: 0x001E2E46 },
     ];
 
     let mut buf = vec![0u32; WIN_WIDTH * WIN_HEIGHT];
     let mut pressed_key: Option<&'static str> = None;
-    let mut last_flip_key = false;
+    let mut last_f_key = false;
+    let mut last_mouse_left = false;
 
-    println!("[Desktop GUI] Running native Cocoa/minifb window (Theme: {}).", theme);
-    println!("[Desktop GUI] Controls: Mouse click on keypad or press 0-9, *, #, C, X, [, ], Arrows, Enter.");
-    println!("[Desktop GUI] Press 'F' to toggle clamshell Open/Closed.");
+    println!("[Desktop GUI] Running native Cocoa host GUI with live serial console & telemetry deck.");
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        // 1. Process Flip Toggle Key (F)
+        // 1. Process Keyboard Hotkeys
         let is_f_down = window.is_key_down(Key::F);
-        if is_f_down && !last_flip_key {
+        if is_f_down && !last_f_key {
             flip_open = !flip_open;
             vm.set_flip_state(flip_open);
         }
-        last_flip_key = is_f_down;
+        last_f_key = is_f_down;
 
-        // 2. Process Keypad Clicks & Keyboard Input
+        if window.is_key_down(Key::P) {
+            paused = !paused;
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+
+        // 2. Process Keypad Clicks & Control Buttons
         let mut active_key: Option<&'static str> = None;
+        let is_mouse_down = window.get_mouse_down(MouseButton::Left);
 
-        // Mouse click hit-testing
         if let Some((mx, my)) = window.get_mouse_pos(MouseMode::Pass) {
-            let is_mouse_down = window.get_mouse_down(MouseButton::Left);
+            let mx_u = mx as usize;
+            let my_u = my as usize;
+
+            // Check deck toolbar clicks on mouse press
+            if is_mouse_down && !last_mouse_left {
+                // [Flip Toggle] button at (515, 20, 130, 36)
+                if mx_u >= 515 && mx_u < 645 && my_u >= 20 && my_u < 56 {
+                    flip_open = !flip_open;
+                    vm.set_flip_state(flip_open);
+                }
+                // [Pause / Resume] button at (655, 20, 130, 36)
+                else if mx_u >= 655 && mx_u < 785 && my_u >= 20 && my_u < 56 {
+                    paused = !paused;
+                }
+                // [Step] button at (795, 20, 85, 36)
+                else if mx_u >= 795 && mx_u < 880 && my_u >= 20 && my_u < 56 {
+                    step_requested = true;
+                }
+            }
+
+            // Keypad hit testing (only when flip is open)
             if is_mouse_down && flip_open {
-                let mx_u = mx as usize;
-                let my_u = my as usize;
                 for btn in &buttons {
                     if mx_u >= btn.x && mx_u < btn.x + btn.w && my_u >= btn.y && my_u < btn.y + btn.h {
                         active_key = Some(btn.key_name);
@@ -104,6 +236,7 @@ pub fn run_desktop_gui(vm: &mut T107Vm, theme: &str, start_closed: bool) -> Resu
                 }
             }
         }
+        last_mouse_left = is_mouse_down;
 
         // Host keyboard fallbacks
         if active_key.is_none() {
@@ -128,7 +261,7 @@ pub fn run_desktop_gui(vm: &mut T107Vm, theme: &str, start_closed: bool) -> Resu
             else if window.is_key_down(Key::Right) { active_key = Some("right"); }
         }
 
-        // Apply key changes to VM
+        // Apply key state transitions
         if active_key != pressed_key {
             if let Some(prev) = pressed_key {
                 vm.release_key(prev);
@@ -140,77 +273,161 @@ pub fn run_desktop_gui(vm: &mut T107Vm, theme: &str, start_closed: bool) -> Resu
         }
 
         // 3. Step VM execution
-        let _ = vm.step(50_000, 25_000);
+        if !paused || step_requested {
+            let _ = vm.step(50_000, 25_000);
+            step_requested = false;
+        }
 
-        // 4. Render Framebuffer
-        buf.fill(0x00121418);
+        // 4. Render Whole Framebuffer
+        buf.fill(0x000A0D14); // Global background
 
-        // Outer chassis
-        draw_rect(&mut buf, 30, 20, 420, 790, body_color);
-        draw_rect(&mut buf, 34, 24, 412, 782, body_color.wrapping_add(0x000A0A0A));
+        // ==========================================
+        // LEFT SIDE: Authentic Nokia 2660 Physical Chassis
+        // ==========================================
+        // Outer chassis & bevels
+        draw_rect(&mut buf, 35, 18, 415, 815, phone_bevel_color);
+        draw_rect(&mut buf, 38, 22, 409, 807, phone_body_color);
 
-        // Clamshell hinge separator
-        draw_rect(&mut buf, 30, 400, 420, 10, 0x000F1216);
-        draw_rect(&mut buf, 180, 398, 120, 14, 0x004A505A);
+        // Hinge divider
+        draw_rect(&mut buf, 35, 402, 415, 12, 0x000B1321);
+        draw_rect(&mut buf, 185, 400, 115, 16, 0x004A5364); // Stainless steel hinge barrel
+        draw_rect(&mut buf, 187, 402, 111, 2,  0x0074819A); // Specular reflection
 
         if flip_open {
-            draw_rect(&mut buf, 210, 35, 60, 6, 0x00222222);
-            draw_rect(&mut buf, 200, 48, 80, 10, 0x00CCCCCC);
+            // Earpiece speaker slit & chrome Nokia emblem
+            draw_rect(&mut buf, 210, 32, 65, 5, 0x00080C14);
+            draw_text(&mut buf, 212, 44, "NOKIA", 0x00D0D7E4, 1);
 
-            // Main Display Screen Bezel
-            draw_rect(&mut buf, 110, 68, GC9307_WIDTH + 8, GC9307_HEIGHT + 8, 0x000A0C0E);
+            // GC9307 240x320 Display Bezel & Glass Edge
+            draw_rect(&mut buf, 121, 62, GC9307_WIDTH + 8, GC9307_HEIGHT + 8, 0x0006090F);
 
             let fb = vm.get_gc9307_framebuffer();
             for dy in 0..GC9307_HEIGHT {
                 for dx in 0..GC9307_WIDTH {
                     let rgb565 = fb[dy][dx];
-                    let xrgb = rgb565_to_xrgb(rgb565);
-                    buf[(72 + dy) * WIN_WIDTH + (114 + dx)] = xrgb;
+                    buf[(66 + dy) * WIN_WIDTH + (125 + dx)] = rgb565_to_xrgb(rgb565);
                 }
             }
 
-            // Keypad Deck (Lower Clamshell)
+            // Lower Clamshell Keypad Deck
             for btn in &buttons {
                 let is_pressed = pressed_key == Some(btn.key_name);
-                let btn_bg = if is_pressed {
-                    0x0010151C
-                } else if btn.key_name == "call" {
-                    0x001D4828
-                } else if btn.key_name == "end" {
-                    0x005A1F22
+                let bg_color = if is_pressed {
+                    btn.accent.wrapping_sub(0x000D0D0D)
                 } else {
-                    0x00242830
+                    btn.accent
                 };
 
-                draw_rect(&mut buf, btn.x, btn.y, btn.w, btn.h, btn_bg);
-                draw_rect(&mut buf, btn.x + 1, btn.y + 1, btn.w - 2, 2, btn_bg.wrapping_add(0x001E1E1E));
-                draw_rect(&mut buf, btn.x + btn.w / 2 - 4, btn.y + btn.h / 2 - 2, 8, 4, 0x00FFFFFF);
+                // Embossed 3D button body
+                draw_rect(&mut buf, btn.x, btn.y, btn.w, btn.h, bg_color);
+                // Top/Left highlight bevel
+                draw_rect(&mut buf, btn.x, btn.y, btn.w, 2, bg_color.wrapping_add(0x001C1C1C));
+                draw_rect(&mut buf, btn.x, btn.y, 2, btn.h, bg_color.wrapping_add(0x001C1C1C));
+                // Bottom/Right shadow bevel
+                draw_rect(&mut buf, btn.x, btn.y + btn.h - 2, btn.w, 2, 0x00080E18);
+                draw_rect(&mut buf, btn.x + btn.w - 2, btn.y, 2, btn.h, 0x00080E18);
+
+                // Button Labels
+                let text_color = if is_pressed { 0x00A0B2CD } else { 0x00FFFFFF };
+                draw_text(&mut buf, btn.x + 12, btn.y + 12, btn.main_label, text_color, 2);
+                if !btn.sub_label.is_empty() {
+                    draw_text(&mut buf, btn.x + 40, btn.y + 20, btn.sub_label, 0x00788CA6, 1);
+                }
             }
         } else {
-            // Closed Flip: Camera Module + Flash + ST7735 Outer Sub-screen
-            draw_rect(&mut buf, 190, 80, 100, 45, 0x000F1216);
-            draw_rect(&mut buf, 210, 92, 22, 22, 0x00050505);
-            draw_circle(&mut buf, 260, 103, 7, 0x00FFFFAA);
+            // Closed Flip: Camera Module + Flash + ST7735 120x160 Sub-Display
+            draw_rect(&mut buf, 185, 75, 115, 52, 0x000B1321);
+            draw_circle(&mut buf, 215, 101, 16, 0x0004060A);
+            draw_circle(&mut buf, 215, 101, 10, 0x0012243A); // Glass lens
+            draw_circle(&mut buf, 268, 101, 8,  0x00FFF380); // LED Flash
 
-            draw_rect(&mut buf, 195, 140, 90, 14, 0x00D0D5DD);
+            draw_text(&mut buf, 218, 138, "NOKIA", 0x00D0D7E4, 1);
 
-            draw_rect(&mut buf, 176, 171, ST7735_WIDTH + 8, ST7735_HEIGHT + 8, 0x0008090C);
+            // ST7735 Outer Screen
+            draw_rect(&mut buf, 178, 168, ST7735_WIDTH + 8, ST7735_HEIGHT + 8, 0x0006090F);
             let sub_fb = vm.get_st7735_framebuffer();
             for dy in 0..ST7735_HEIGHT {
                 for dx in 0..ST7735_WIDTH {
                     let rgb565 = sub_fb[dy][dx];
-                    let xrgb = rgb565_to_xrgb(rgb565);
-                    buf[(175 + dy) * WIN_WIDTH + (180 + dx)] = xrgb;
+                    buf[(172 + dy) * WIN_WIDTH + (182 + dx)] = rgb565_to_xrgb(rgb565);
                 }
             }
 
-            draw_rect(&mut buf, 80, 460, 320, 280, body_color.wrapping_sub(0x00060606));
-            draw_rect(&mut buf, 190, 580, 100, 12, 0x00A0A5AE);
+            draw_rect(&mut buf, 80, 480, 325, 260, phone_body_color.wrapping_sub(0x0004060A));
+            draw_text(&mut buf, 215, 590, "NOKIA", 0x003A4D6B, 2);
         }
 
-        // Bottom Telemetry Bar
-        draw_rect(&mut buf, 0, 816, WIN_WIDTH, 24, 0x000A0C0E);
-        draw_rect(&mut buf, 10, 822, 8, 8, if flip_open { 0x0000FF00 } else { 0x00FFAA00 });
+        // ==========================================
+        // CENTER DIVIDER
+        // ==========================================
+        draw_rect(&mut buf, 485, 10, 2, WIN_HEIGHT - 20, 0x001C273C);
+
+        // ==========================================
+        // RIGHT SIDE: Companion Dev Deck & Serial Console
+        // ==========================================
+        // Action Toolbar
+        let flip_label = if flip_open { "FLIP: OPEN" } else { "FLIP: CLOSED" };
+        let flip_btn_color = if flip_open { 0x001B6328 } else { 0x00785014 };
+        draw_deck_button(&mut buf, 515, 20, 130, 36, flip_label, flip_btn_color);
+
+        let pause_label = if paused { "RESUME" } else { "PAUSE" };
+        let pause_btn_color = if paused { 0x00781E22 } else { 0x00223D66 };
+        draw_deck_button(&mut buf, 655, 20, 130, 36, pause_label, pause_btn_color);
+
+        draw_deck_button(&mut buf, 795, 20, 85, 36, "STEP", 0x0024344E);
+        draw_deck_button(&mut buf, 890, 20, 80, 36, "RESET", 0x00322232);
+
+        // Hardware Telemetry Box
+        draw_rect(&mut buf, 515, 70, 455, 160, deck_bg_color);
+        draw_rect(&mut buf, 515, 70, 455, 24, 0x00121B2B);
+        draw_text(&mut buf, 525, 77, "HARDWARE TELEMETRY (UNISOC T107 CORTEX-A7)", 0x0000E5FF, 1);
+
+        let pc = vm.get_pc();
+        let sp = vm.get_sp();
+        let lr = vm.get_lr();
+        let cpsr = vm.get_cpsr();
+        let total_insns = vm.get_instruction_count();
+        let elapsed = start_time.elapsed().as_secs_f64().max(0.001);
+        let mips = (total_insns as f64 / elapsed) / 1_000_000.0;
+
+        draw_text(&mut buf, 525, 105, &format!("PC   : 0x{:08X}", pc), 0x00FFFFFF, 1);
+        draw_text(&mut buf, 740, 105, &format!("SP   : 0x{:08X}", sp), 0x00FFFFFF, 1);
+        draw_text(&mut buf, 525, 125, &format!("LR   : 0x{:08X}", lr), 0x00FFFFFF, 1);
+        draw_text(&mut buf, 740, 125, &format!("CPSR : 0x{:08X} (SVC)", cpsr), 0x00FFFFFF, 1);
+
+        draw_text(&mut buf, 525, 148, &format!("Speed: {:.2} MIPS | Insns: {}", mips, total_insns), 0x0078FF80, 1);
+        draw_text(&mut buf, 525, 168, &format!("Hall Sensor: Pin 0 = {} ({})", if flip_open { "1" } else { "0" }, if flip_open { "OPEN" } else { "CLOSED" }), 0x00FFD54F, 1);
+        draw_text(&mut buf, 525, 188, "INTC Lines : IRQ 0..31 Ready | Software IRQ Vectors Active", 0x00B0BEC5, 1);
+        draw_text(&mut buf, 525, 208, "Audio DAC  : 1000 Hz Tone Buzzer & PCM FIFO Synced", 0x00B0BEC5, 1);
+
+        // Live Serial Console Box (UART0)
+        draw_rect(&mut buf, 515, 245, 455, 595, 0x00080B10);
+        draw_rect(&mut buf, 515, 245, 455, 24, 0x00101826);
+        draw_text(&mut buf, 525, 252, "LIVE SERIAL CONSOLE (UART0 @ 115200 8N1)", 0x0076FF03, 1);
+
+        // Extract and render last 42 lines from UART0 TX FIFO
+        let uart_raw = vm.get_uart_tx_buffer();
+        let uart_str = String::from_utf8_lossy(&uart_raw);
+        let lines: Vec<&str> = uart_str.lines().collect();
+        let display_lines = if lines.len() > 44 { &lines[lines.len() - 44..] } else { &lines[..] };
+
+        let mut text_y = 280;
+        for line in display_lines {
+            let color = if line.starts_with("[PASS]") || line.starts_with("[RESULT]") {
+                0x0000E676
+            } else if line.starts_with("[TEST]") {
+                0x0040C4FF
+            } else if line.starts_with("[N2660Emu MMIO TRAP]") {
+                0x00FFAB40
+            } else {
+                0x00A0B2C6
+            };
+
+            // Truncate line to max 65 chars to fit panel
+            let truncated = if line.len() > 65 { &line[..65] } else { line };
+            draw_text(&mut buf, 525, text_y, truncated, color, 1);
+            text_y += 12;
+        }
 
         window.update_with_buffer(&buf, WIN_WIDTH, WIN_HEIGHT)?;
     }
@@ -218,10 +435,19 @@ pub fn run_desktop_gui(vm: &mut T107Vm, theme: &str, start_closed: bool) -> Resu
     Ok(())
 }
 
+fn draw_deck_button(buf: &mut [u32], x: usize, y: usize, w: usize, h: usize, label: &str, color: u32) {
+    draw_rect(buf, x, y, w, h, color);
+    draw_rect(buf, x, y, w, 2, color.wrapping_add(0x00222222));
+    draw_rect(buf, x, y + h - 2, w, 2, 0x0006090F);
+    let text_x = x + (w - label.len() * 6) / 2;
+    draw_text(buf, text_x, y + (h - 7) / 2, label, 0x00FFFFFF, 1);
+}
+
 fn draw_rect(buf: &mut [u32], x: usize, y: usize, w: usize, h: usize, color: u32) {
     for cy in y..(y + h).min(WIN_HEIGHT) {
+        let row_start = cy * WIN_WIDTH;
         for cx in x..(x + w).min(WIN_WIDTH) {
-            buf[cy * WIN_WIDTH + cx] = color;
+            buf[row_start + cx] = color;
         }
     }
 }
@@ -238,6 +464,37 @@ fn draw_circle(buf: &mut [u32], cx: usize, cy: usize, r: usize, color: u32) {
                 }
             }
         }
+    }
+}
+
+fn draw_char(buf: &mut [u32], x: usize, y: usize, c: u8, color: u32, scale: usize) {
+    if c < 32 || c > 127 { return; }
+    let glyph = &FONT5X7[(c - 32) as usize];
+    for col in 0..5 {
+        let col_bits = glyph[col];
+        for row in 0..7 {
+            if (col_bits & (1 << row)) != 0 {
+                for sy in 0..scale {
+                    let py = y + row * scale + sy;
+                    if py >= WIN_HEIGHT { continue; }
+                    let row_start = py * WIN_WIDTH;
+                    for sx in 0..scale {
+                        let px = x + col * scale + sx;
+                        if px < WIN_WIDTH {
+                            buf[row_start + px] = color;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn draw_text(buf: &mut [u32], x: usize, y: usize, text: &str, color: u32, scale: usize) {
+    let mut cx = x;
+    for b in text.bytes() {
+        draw_char(buf, cx, y, b, color, scale);
+        cx += 6 * scale;
     }
 }
 

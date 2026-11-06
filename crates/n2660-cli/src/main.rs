@@ -41,8 +41,8 @@ struct Args {
     #[arg(long)]
     gui: bool,
 
-    /// Color theme for phone casing in Desktop GUI ("Deep Blue", "Pop Red", "Classic Black")
-    #[arg(long, default_value = "Deep Blue")]
+    /// Optional theme argument (retained for backward compatibility; standardizes on authentic Deep Navy)
+    #[arg(long, default_value = "Deep Navy")]
     theme: String,
 
     /// Launch interactive real-time terminal GUI & keypad
@@ -254,9 +254,8 @@ fn main() {
 
     // Handle GUI or Interactive TUI mode
     if args.gui {
-        let theme = args.theme.clone();
         let closed = args.flip.to_lowercase() == "closed";
-        if let Err(e) = gui::run_desktop_gui(&mut vm, &theme, closed) {
+        if let Err(e) = gui::run_desktop_gui(&mut vm, closed) {
             eprintln!("Desktop GUI error: {}", e);
         }
         return;
