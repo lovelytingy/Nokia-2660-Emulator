@@ -224,6 +224,11 @@ pub fn run_desktop_gui(vm: &mut T107Vm, start_closed: bool) -> Result<(), Box<dy
                 else if mx_u >= 795 && mx_u < 880 && my_u >= 20 && my_u < 56 {
                     step_requested = true;
                 }
+                // [Reset] button at (890, 20, 80, 36)
+                else if mx_u >= 890 && mx_u < 970 && my_u >= 20 && my_u < 56 {
+                    let _ = vm.init_cpu(vm.entry_point);
+                    paused = false;
+                }
             }
 
             // Keypad hit testing (only when flip is open)
@@ -251,14 +256,18 @@ pub fn run_desktop_gui(vm: &mut T107Vm, start_closed: bool) -> Result<(), Box<dy
             else if window.is_key_down(Key::Key8) || window.is_key_down(Key::NumPad8) { active_key = Some("8"); }
             else if window.is_key_down(Key::Key9) || window.is_key_down(Key::NumPad9) { active_key = Some("9"); }
             else if window.is_key_down(Key::C) { active_key = Some("call"); }
-            else if window.is_key_down(Key::X) { active_key = Some("end"); }
+            else if window.is_key_down(Key::X) || window.is_key_down(Key::Delete) { active_key = Some("end"); }
             else if window.is_key_down(Key::LeftBracket) { active_key = Some("soft1"); }
-            else if window.is_key_down(Key::RightBracket) { active_key = Some("soft2"); }
-            else if window.is_key_down(Key::Enter) { active_key = Some("ok"); }
+            else if window.is_key_down(Key::RightBracket) || window.is_key_down(Key::Backspace) { active_key = Some("soft2"); }
+            else if window.is_key_down(Key::Enter) || window.is_key_down(Key::Space) { active_key = Some("ok"); }
             else if window.is_key_down(Key::Up) { active_key = Some("up"); }
             else if window.is_key_down(Key::Down) { active_key = Some("down"); }
             else if window.is_key_down(Key::Left) { active_key = Some("left"); }
             else if window.is_key_down(Key::Right) { active_key = Some("right"); }
+            else if window.is_key_down(Key::Slash) { active_key = Some("star"); }
+            else if window.is_key_down(Key::Backslash) { active_key = Some("hash"); }
+            else if window.is_key_down(Key::Equal) { active_key = Some("vol_up"); }
+            else if window.is_key_down(Key::Minus) { active_key = Some("vol_down"); }
         }
 
         // Apply key state transitions
@@ -274,7 +283,7 @@ pub fn run_desktop_gui(vm: &mut T107Vm, start_closed: bool) -> Result<(), Box<dy
 
         // 3. Step VM execution
         if !paused || step_requested {
-            let _ = vm.step(50_000, 25_000);
+            let _ = vm.step(100_000, 10_000);
             step_requested = false;
         }
 
@@ -397,6 +406,7 @@ pub fn run_desktop_gui(vm: &mut T107Vm, start_closed: bool) -> Result<(), Box<dy
 
         draw_text(&mut buf, 525, 148, &format!("Speed: {:.2} MIPS | Insns: {}", mips, total_insns), 0x0078FF80, 1);
         draw_text(&mut buf, 525, 168, &format!("Hall Sensor: Pin 0 = {} ({})", if flip_open { "1" } else { "0" }, if flip_open { "OPEN" } else { "CLOSED" }), 0x00FFD54F, 1);
+        draw_text(&mut buf, 740, 168, &format!("Active Key: {}", pressed_key.unwrap_or("NONE")), 0x00FFD54F, 1);
         draw_text(&mut buf, 525, 188, "INTC Lines : IRQ 0..31 Ready | Software IRQ Vectors Active", 0x00B0BEC5, 1);
         draw_text(&mut buf, 525, 208, "Audio DAC  : 1000 Hz Tone Buzzer & PCM FIFO Synced", 0x00B0BEC5, 1);
 

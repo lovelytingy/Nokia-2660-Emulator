@@ -235,7 +235,7 @@ fn main() {
         let _ = vm.setup_atags(args.atags_addr, args.board_id as u32, Some(cmd));
     }
 
-    // Load firmware binary or BootROM
+    // Load firmware binary, BootROM, or default interactive firmware
     if args.bootrom {
         println!("[BootROM] Reset vector configured at 0x00000000");
         let _ = vm.set_entry_point(0x0000_0000);
@@ -244,7 +244,16 @@ fn main() {
             println!("[VM] Loading binary '{:?}' ({} bytes) to address 0x{:08X}...", fw_path, data.len(), args.entry);
             let _ = vm.load_bytes(&data, args.entry);
             let _ = vm.set_entry_point(args.entry);
+        } else {
+            eprintln!("[N2660Emu] Error: Failed to open firmware binary '{:?}'", fw_path);
+            process::exit(1);
         }
+    } else {
+        // Built-in default: Authentic Nokia 2660 Flip OS Shell
+        let default_fw = include_bytes!("../../../tests/baremetal/interactive_demo.bin");
+        println!("[VM] No firmware binary specified; booting authentic Nokia 2660 Flip OS Shell ({} bytes) at 0x{:08X}...", default_fw.len(), args.entry);
+        let _ = vm.load_bytes(default_fw, args.entry);
+        let _ = vm.set_entry_point(args.entry);
     }
 
     // Inject initial keys

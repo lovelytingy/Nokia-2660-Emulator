@@ -56,4 +56,30 @@ fn test_keypad_injection_and_flip_state() {
     assert!(vm.release_key("call"));
     assert!(vm.press_key("ok"));
     assert!(vm.release_key("ok"));
+
+    // Test interactive demo execution and keypad ISR
+    let fw_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/baremetal/interactive_demo.bin");
+    let data = std::fs::read(&fw_path).expect("Failed to read interactive_demo.bin");
+    let mut demo_vm = T107Vm::new(true, false, false).expect("VM init failed");
+    demo_vm.load_bytes(&data, 0x8000_0000).expect("Failed to load binary");
+    demo_vm.init_cpu(0x8000_0000).expect("Failed to init CPU");
+
+    // Step enough cycles for boot and drawing initial home screen (~1.5M instructions)
+    for _ in 0..30 {
+        let _ = demo_vm.step(50_000, 25_000);
+    }
+
+    // Now inject key 5
+    demo_vm.press_key("5");
+    for _ in 0..10 {
+        let _ = demo_vm.step(50_000, 25_000);
+    }
+    demo_vm.release_key("5");
+    for _ in 0..10 {
+        let _ = demo_vm.step(50_000, 25_000);
+    }
+
+    let buf_out = demo_vm.get_uart_tx_buffer();
+    let uart_out = String::from_utf8_lossy(&buf_out);
+    assert!(uart_out.contains("[OS] Key Pressed: '5' | Number: 5"));
 }
