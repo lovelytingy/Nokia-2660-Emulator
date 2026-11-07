@@ -13,8 +13,8 @@ pub const DRAM_EXT_SIZE: usize = 16 * 1024 * 1024; // 16 MB extended (completing
 pub const USER_DRAM_BASE: u64 = 0x8800_0000;
 pub const USER_DRAM_SIZE: usize = 32 * 1024 * 1024; // 32 MB userland application DRAM window
 
-pub const SYS_HEAP_BASE: u64 = 0x7800_0000;
-pub const SYS_HEAP_SIZE: usize = 128 * 1024 * 1024; // 128 MB ThreadX Task Stack & Dynamic Heap Window (0x7800_0000..0x8000_0000)
+pub const SYS_HEAP_BASE: u64 = 0x7200_0000;
+pub const SYS_HEAP_SIZE: usize = 224 * 1024 * 1024; // 224 MB ThreadX Task Stack & Dynamic Heap Window (0x7200_0000..0x8000_0000)
 
 pub const FLASH_DIRECT_BASE: u64 = 0x6000_0000;
 pub const FLASH_DIRECT_SIZE: usize = 128 * 1024 * 1024; // 128 MB
@@ -27,6 +27,9 @@ pub const PL011_UART_SIZE: usize = 0x1000; // 4 KB
 
 pub const SPRD_AHB_SYS_BASE: u64 = 0x2000_0000;
 pub const SPRD_AHB_SYS_SIZE: usize = 32 * 1024 * 1024; // 32 MB AHB, LCDC, HW SFC and System Registers (0x2000_0000..0x2200_0000)
+
+pub const SPRD_GIC_BASE: u64 = 0x1200_0000;
+pub const SPRD_GIC_SIZE: usize = 64 * 1024; // 64 KB ARM Cortex-A7 MPCore / GIC-400 (Distributor & CPU Interface)
 
 pub const TRAP_BASE: u64 = 0x4000_0000;
 pub const TRAP_SIZE: usize = 16 * 1024 * 1024; // 16 MB AON Peripheral & Control Window (0x4000_0000..0x4100_0000)

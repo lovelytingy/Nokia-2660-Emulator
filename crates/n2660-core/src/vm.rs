@@ -88,7 +88,7 @@ impl T107Vm {
         uc.mem_map(USER_DRAM_BASE, USER_DRAM_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map User DRAM at 0x{:X}: {:?}", USER_DRAM_BASE, e))?;
 
-        // 2d. Map ThreadX Task Stack & Dynamic Heap Window (32 MB at 0x7E00_0000)
+        // 2d. Map ThreadX Task Stack & Dynamic Heap Window (224 MB at 0x7200_0000..0x8000_0000)
         uc.mem_map(SYS_HEAP_BASE, SYS_HEAP_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map SYS HEAP at 0x{:X}: {:?}", SYS_HEAP_BASE, e))?;
 
@@ -137,6 +137,10 @@ impl T107Vm {
         // 11. Map ARM High Exception Vectors (64 KB at 0xFFFF_0000)
         uc.mem_map(HIGH_VECTORS_BASE, HIGH_VECTORS_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map High Vectors at 0x{:X}: {:?}", HIGH_VECTORS_BASE, e))?;
+
+        // 12. Map ARM Cortex-A7 GIC-400 / MPCore (64 KB at 0x1200_0000)
+        uc.mem_map(SPRD_GIC_BASE, SPRD_GIC_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map GIC-400 at 0x{:X}: {:?}", SPRD_GIC_BASE, e))?;
 
         // Initialize PMIC EIC Power Key register in memory (0x40608280) to 2 (bit 1 = 1: Power key released)
         let _ = uc.mem_write(0x4060_8280, &2u32.to_le_bytes());
@@ -214,6 +218,16 @@ impl T107Vm {
                     let insn_k = ctx.kernel_insn_count / 1_000;
                     let status = format!("* Exec: {}k insns | PC: 0x{:08X}", insn_k, addr);
                     ctx.display.gc9307.render_boot_stage(BootStage::Kernel, &status, 75);
+                }
+            }
+
+            if addr == 0x810D_9EA4 || addr == 0x810D_9BDC {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                let r2 = uc.reg_read(RegisterARM::R2).unwrap_or(0);
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                if uc.get_data_mut().logged_traps.insert(addr as u32 ^ lr as u32) {
+                    println!("[SCI_ASSERT] Triggered at 0x{:08X} from LR 0x{:08X}: r0=0x{:08X}, r1=0x{:08X}, r2=0x{:08X}", addr, lr, r0, r1, r2);
                 }
             }
 
@@ -717,7 +731,9 @@ impl T107Vm {
                         let _ = uc.mem_read(target_addr, &mut resp_bytes);
                         u32::from_le_bytes(resp_bytes)
                     };
-                    let _ = uc.mem_write(SPRD_PMIC_ADI_BASE + 0x002C, &resp.to_le_bytes());
+                    let tag = (((target_addr as u32) >> 2) & 0x7FFF) << 16;
+                    let full_resp = tag | (resp & 0xFFFF);
+                    let _ = uc.mem_write(SPRD_PMIC_ADI_BASE + 0x002C, &full_resp.to_le_bytes());
                 }
                 true
             },
@@ -959,6 +975,31 @@ impl T107Vm {
             },
         ).map_err(|e| format!("Failed to add LCM Data write hook: {:?}", e))?;
 
+        // Setup ARM GIC-400 Hooks (0x1200_0000..0x1200_4000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_GIC_BASE,
+            SPRD_GIC_BASE + 0x4000,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_GIC_BASE) as u32;
+                let val: u32 = match offset {
+                    0x1000 => 0x0000_0001, // GICD_CTLR: Group 0 enabled
+                    0x1004 => 0x0000_00A3, // GICD_TYPER: 128 IRQ lines (ITLinesNumber=3), 1 CPU interface
+                    0x2000 => 0x0000_0001, // GICC_CTLR: CPU interface enabled
+                    0x2004 => 0x0000_00FF, // GICC_PMR: Priority mask
+                    0x200C => 0x0000_03FF, // GICC_IAR: 1023 (spurious / no pending interrupt)
+                    _ => {
+                        let mut cur = [0u8; 4];
+                        let _ = uc.mem_read(addr, &mut cur);
+                        u32::from_le_bytes(cur)
+                    }
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add GIC read hook: {:?}", e))?;
+
         // Setup Unmapped Trap Read/Write Hook
         uc.add_mem_hook(
             HookType::MEM_READ_UNMAPPED | HookType::MEM_WRITE_UNMAPPED,
@@ -1175,7 +1216,10 @@ impl T107Vm {
             Err(e) => {
                 let err_str = format!("{:?}", e);
                 if let Some(page) = self.uc.get_data_mut().pending_unmapped_page.take() {
-                    let _ = self.uc.mem_map(page, 0x1000, Prot::ALL);
+                    let chunk_base = page & !0xFFFF;
+                    if self.uc.mem_map(chunk_base, 0x10000, Prot::ALL).is_err() {
+                        let _ = self.uc.mem_map(page, 0x1000, Prot::ALL);
+                    }
                     return Ok(true);
                 }
                 if err_str.contains("TIMEOUT") || err_str.contains("OK") {
