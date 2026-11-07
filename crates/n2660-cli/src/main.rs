@@ -45,7 +45,15 @@ struct Args {
     #[arg(long)]
     gui: bool,
 
-    /// Optional theme argument (retained for backward compatibility; standardizes on authentic Deep Navy)
+    /// Launch desktop host GUI directly in Phone-Only view (centered phone without telemetry deck)
+    #[arg(long)]
+    phone_only: bool,
+
+    /// Capture GUI screenshot to image file (PPM/PNG) and exit
+    #[arg(long)]
+    screenshot: Option<PathBuf>,
+
+    /// Optional theme argument (Deep Navy, Charcoal Black, Pop Pink, Lush Green)
     #[arg(long, default_value = "Deep Navy")]
     theme: String,
 
@@ -322,9 +330,9 @@ fn main() {
     }
 
     // Handle GUI or Interactive TUI mode
-    if args.gui {
+    if args.gui || args.phone_only || args.screenshot.is_some() {
         let closed = args.flip.to_lowercase() == "closed";
-        if let Err(e) = gui::run_desktop_gui(&mut vm, closed) {
+        if let Err(e) = gui::run_desktop_gui(&mut vm, closed, Some(&args.theme), args.phone_only, args.screenshot.as_deref()) {
             eprintln!("Desktop GUI error: {}", e);
         }
         return;

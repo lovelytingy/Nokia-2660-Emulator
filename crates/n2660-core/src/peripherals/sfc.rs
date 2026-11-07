@@ -46,6 +46,13 @@ impl SprdSfc {
         self.storage[..copy_len].copy_from_slice(&image_bytes[..copy_len]);
     }
 
+    pub fn load_partition(&mut self, offset: usize, data: &[u8]) {
+        if offset < self.storage.len() {
+            let copy_len = data.len().min(self.storage.len() - offset);
+            self.storage[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
+        }
+    }
+
     pub fn write_page(&mut self, block: usize, page: usize, data: &[u8]) {
         let flash_offset = (block * 64 + page) * NAND_PAGE_SIZE;
         if flash_offset < self.storage.len() {

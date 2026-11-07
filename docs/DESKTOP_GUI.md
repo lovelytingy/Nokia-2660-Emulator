@@ -7,31 +7,36 @@ SPDX-License-Identifier: MIT
 
 ## 1. Overview
 
-The **N2660Emu Desktop GUI** is a native host window application built entirely in **Rust** (leveraging `minifb` with Cocoa on macOS and X11/Wayland on Linux). It delivers an authentic physical hardware skin of the **Nokia 2660 Flip** (Model TA-1480, Unisoc T107 / UMS9117 platform) alongside an integrated real-time **Hardware Telemetry & Serial Console Deck** in a unified 990×860 window.
+The **N2660Emu Desktop GUI** is a native host window application built in **Rust** (leveraging `minifb` with Cocoa on macOS and X11/Wayland on Linux). It delivers an authentic physical hardware skin of the **Nokia 2660 Flip** (Model TA-1480, Unisoc T107 / UMS9117 platform) alongside an integrated real-time **Hardware Telemetry & Serial Console Deck** in a unified 990×860 window.
+
+<p align="center">
+  <img src="../ss-gui.png" alt="Nokia 2660 Flip Native Desktop GUI (Model TA-1480, Unisoc T107)" width="880">
+</p>
 
 ```
 +------------------------------------+-------------------------------------------+
-|      NOKIA 2660 FLIP (0..490)      |        DEVELOPER DECK (500..990)          |
+|      NOKIA 2660 FLIP (0..335)      |        DEVELOPER DECK (340..990)          |
 |                                    |                                           |
-|       [ Upper Clamshell ]          | [FLIP: OPEN]  [PAUSE/RESUME]  [STEP]      |
+|       [ Upper Clamshell ]          | [FLIP [F]] [PHONE ONLY] [RESET] [POWER OFF|
 |   +----------------------------+   +-------------------------------------------+
-|   |    NOKIA Chrome Badge      |   | HARDWARE TELEMETRY (UNISOC T107 CORTEX-A7)|
-|   |  +----------------------+  |   |   PC   : 0x80000000     SP   : 0x8003FF00 |
-|   |  |                      |  |   |   LR   : 0x80000000     CPSR : 0x600000D3 |
-|   |  |   240x320 Main LCD   |  |   |   Speed: 4.85 MIPS      Insns: 1,420,000  |
-|   |  |   (GC9307 SPI0)      |  |   |   Hall Sensor : Pin 0 = 1 (OPEN)          |
-|   |  |                      |  |   |   INTC Lines  : IRQ 0..31 Ready           |
-|   |  +----------------------+  |   |   Audio DAC   : 1000 Hz Tone Buzzer Ready |
-|   +----------------------------+   +-------------------------------------------+
-|       [ Dual Metallic Hinge ]      | LIVE SERIAL CONSOLE (UART0 @ 115200 8N1)  |
-|   +----------------------------+   |   [BOOT] ARM Cortex-A7 initialized        |
-|   |  [Soft1]   [^]   [Soft2]   |   |   [TEST] Internal SRAM (IRAM) verified    |
-|   |  [ < ]    [OK]    [ > ]    |   |   [PASS] GC9307 240x320 display verified  |
-|   |  [CALL]   [ v ]   [END]    |   |   [TEST] SPRD Keypad Matrix & Hall Sensor |
-|   |  [1 .@]   [2 ABC] [3 DEF]  |   |   [PASS] Keypad & flip sensor verified    |
-|   |  [4 GHI]  [5 JKL] [6 MNO]  |   |   [TEST] SFC Winbond W25N01GV SPI NAND    |
-|   |  [7PQRS]  [8 TUV] [9WXYZ]  |   |   [RESULT] *** ALL CHECKS PASSED ***      |
-|   |  [* +]    [0 _]   [# ^]    |   |   (Auto-scrolls latest 44 lines at 60 FPS)|
+|   |    Earpiece Speaker Mesh   |   | HARDWARE TELEMETRY (UNISOC T107 CORTEX-A7)|
+|   |    NOKIA Brand Wordmark    |   |   PC   : 0x810DBE60     SP   : 0x82FFFF8C |
+|   |  +----------------------+  |   |   LR   : 0x00000000     CPSR : 0x200000F3 |
+|   |  |                      |  |   |   Speed: 2.39 MIPS      Insns: 8,000,005  |
+|   |  |   240x320 Main LCD   |  |   |   Hall Sensor : Pin 0 = 1 (OPEN)          |
+|   |  |   (GC9307 SPI0)      |  |   |   Boot Stage  : KernelImg (MOCOR RTOS)    |
+|   |  |                      |  |   +-------------------------------------------+
+|   |  +----------------------+  |   | LIVE SERIAL CONSOLE (UART0 @ 115200 8N1)  |
+|   +----------------------------+   |   DDR init OK                             |
+|       [ Center Hinge Barrel ]      |   boot0 started!: 44bd                    |
+|   +----------------------------+   |   boot1 started!: 1f734                   |
+|   |  [Soft1]   [^]   [Soft2]   |   |   order by ofst                           |
+|   |  [Menu]   [OK]   [Back]    |   |   load kernel suc                         |
+|   |  [CALL]   [ v ]   [END]    |   |   run kernel:20eed                        |
+|   |  [1 .@]   [2 ABC] [3 DEF]  |   |   (Auto-scrolls, selection, right-click)  |
+|   |  [4 GHI]  [5 JKL] [6 MNO]  |   |                                           |
+|   |  [7PQRS]  [8 TUV] [9WXYZ]  |   |                                           |
+|   |  [* +]    [0 _]   [# ^]    |   |                                           |
 |   +----------------------------+   |                                           |
 +------------------------------------+-------------------------------------------+
 ```
@@ -40,43 +45,30 @@ The **N2660Emu Desktop GUI** is a native host window application built entirely 
 
 ## 2. Architecture & Design
 
-### 2.1 Single Authentic Theme: Nokia Deep Navy Blue
-The emulator standardizes on the signature physical finish of the real Nokia 2660 Flip:
-- **Body Casing**: Deep Navy Blue (`#14223A`) with beveled outer boundaries (`#0E192B`).
-- **Metallic Hinge**: Multi-segment brushed aluminum hinges (`#7A889B` / `#566270`) connecting upper and lower clamshell assemblies.
-- **Keypad Tactile Buttons**: Embossed slate-blue keys (`#1E2E46`) with high-contrast T9 legends, green Call accent (`#1B6328`), red End accent (`#781E22`), and chrome D-Pad ring (`#32425E`).
+### 2.1 Authentic Physical Form Factor: Nokia 2660 Flip Matte Black
+The emulator faithfully reproduces the slender dimensions and physical geometry of the real device:
+- **Body Dimensions**: 55mm chassis width, 108mm closed height, ~202mm open height.
+- **Composite Casing**: Matte Charcoal / Obsidian composite (`#1B1D21`) with beveled outer boundaries (`#121417`) and fine specular highlights (`#282C32`).
+- **Nokia Brand Wordmark**: Embedded anti-aliased vector logotype rasterizer rendering the iconic Nokia corporate wordmark positioned precisely after the earpiece acoustic mesh slit above the 2.8" QVGA display.
+- **Continuous 3-Column Keypad**: Tactile numeric keycaps with large numerals, clean T9 sub-labels (`abc`, `def`, etc.), metallic squircle D-Pad ring with OK center key, and Key 5 tactile locator bar.
+- **Tactile Side Controls**: Volume Up, Volume Down, and dedicated SOS Emergency key on the lower right flank, with 3.5mm headphone and Micro-USB port cutouts on the left flank.
 
-### 2.2 Dual Display Pipeline
-1. **Main Display (GC9307)**: 240×320 QVGA, 16-bit RGB565 over SPI0 (`0x50080000`).
-2. **Outer Sub-Display (ST7735)**: 120×160 QQVGA, 16-bit RGB565 over SPI1 (`0x50090000`).
+### 2.2 Clamshell Mechanics & Drag Gestures
+- **Physics-Accurate Flip Animation**: 60 FPS cosine ease-in-out rotation with realistic 3D perspective foreshortening.
+- **Natural Touch/Mouse Drag Gestures**:
+  - Drag the upper display downward ($\Delta y > 35\text{px}$) to close the clamshell.
+  - Drag the front cover upward ($\Delta y < -35\text{px}$) to open the clamshell.
+- **Hall Effect Sensor**: GPIO Bank 0 Pin 0 automatically toggles between HIGH (1 = open, routing DMA to GC9307) and LOW (0 = closed, routing DMA to ST7735 cover display).
 
-Both framebuffers convert directly to 32-bit XRGB host window pixels via fast bitwise channel scaling:
-```rust
-fn rgb565_to_xrgb(c: u16) -> u32 {
-    let r = (((c >> 11) & 0x1F) * 255 / 31) as u32;
-    let g = (((c >> 5) & 0x3F) * 255 / 63) as u32;
-    let b = ((c & 0x1F) * 255 / 31) as u32;
-    (r << 16) | (g << 8) | b
-}
-```
+### 2.3 Dual View Modes: Phone-Only & Split Dev Deck
+- **Split Dev Deck Mode**: Side-by-side view featuring the physical phone on the left and developer telemetry & UART0 console on the right.
+- **Phone-Only View Mode**: Minimalist centered phone presentation with an elegant floating translucent bottom pill dock (`[F] Flip  |  [L] Show Logs  |  [R] Reset  |  [Esc] Power Off`).
+- Toggle seamlessly at 60 FPS using the `[L]` key or toolbar buttons.
 
-### 2.3 Interactive Keypad Matrix & Hit-Testing
-Clicking any keypad button triggers geometric hit-testing against the phone keypad matrix:
-- **Visual Feedback**: The clicked key is dynamically highlighted with active accent colors.
-- **Hardware Injection**: Button events directly set the corresponding row/column bits in the Unisoc Keypad controller registers (`STATUS0` / `STATUS1` at `0x50060000` / `0x50060004`) and trigger INTC IRQ 5.
-
-### 2.4 Magnetic Clamshell Hall Effect Flip Sensor
-The Nokia 2660 Flip uses an internal magnetic Hall effect sensor connected to **SPRD GPIO Bank 0 Pin 0** (`0x50040004`):
-- **Flip Open**: Pin 0 is pulled HIGH (`0x1`). Renders the main 240×320 GC9307 display and enables full keypad interaction.
-- **Flip Closed**: Pin 0 is pulled LOW (`0x0`). Transitions to closed clamshell casing, displaying the camera module pill, optical lens reflection, warm LED flash, outer Nokia logo, and active 120×160 sub-display clock/notifications.
-
-Toggle the flip state anytime via the toolbar **`[FLIP]`** button or the `f` / `F` key.
-
-### 2.5 Live Serial Console & Hardware Telemetry
-The companion developer deck (X: 500..990) features:
-- **Zero-Dependency 5×7 Bitmap Font**: Embedded 96-glyph ASCII font rendering crisp text directly into the frame buffer without requiring system font libraries.
-- **Live Auto-scrolling UART0 Stream**: Continuously pulls TX buffer data from the virtual UART0 FIFO at 60 FPS, color-coding log entries (`[PASS]` in emerald green, `[TEST]` in cyan, `[MMIO TRAP]` in amber, and general telemetry in cool gray).
-- **Live CPU & SoC Telemetry**: Real-time readouts of PC, SP, LR, CPSR, instruction counts, dynamic execution speed (MIPS), GPIO Hall sensor, INTC lines, and Audio DAC status.
+### 2.4 Interactive UART0 Serial Console
+- **Interactive Line Selection**: Click-and-drag across log lines to highlight text ranges.
+- **Native Host OS Right-Click Copy**: Right-clicking copies selected lines or the line under cursor directly to the host system clipboard (`pbcopy` / `wl-copy` / `xclip` / `clip.exe`), confirmed by a subtle `[COPIED TO CLIPBOARD]` notification.
+- **Mouse Wheel History Scrolling**: Freely scroll back through boot history; a `v LIVE` jump button returns to real-time auto-scrolling.
 
 ---
 
@@ -84,36 +76,51 @@ The companion developer deck (X: 500..990) features:
 
 | Host Key | Mouse Action | Nokia 2660 Function | Hardware Matrix Mapping |
 | :--- | :--- | :--- | :--- |
-| `0` – `9` | Click Button `0`–`9` | Numeric T9 Input | `STATUS0` bits 0–9 |
-| `*` | Click Button `*` | Symbol / Star | `STATUS0` bit 10 |
-| `#` | Click Button `#` | Shift / Space / Hash | `STATUS0` bit 11 |
+| `0` – `9` | Click Key `0`–`9` | Numeric T9 Input | `STATUS0` bits 0–9 |
+| `*` | Click Key `*` | Symbol / Star (`+`) | `STATUS0` bit 10 |
+| `#` | Click Key `#` | Shift / Space / Hash (`^`) | `STATUS0` bit 11 |
 | `c` / `C` | Click `CALL` | Call / Answer / Dial | `STATUS1` bit 0 |
-| `x` / `e` / `Esc` | Click `END` | End Call / Power / Clear | `STATUS1` bit 1 |
-| `[` | Click Left SoftKey | Left SoftKey (Menu) | `STATUS1` bit 2 |
-| `]` | Click Right SoftKey | Right SoftKey (Back) | `STATUS1` bit 3 |
+| `x` / `e` | Click `END` | End Call / Power / Clear | `STATUS1` bit 1 |
+| `[` | Click SoftKey 1 | Left Selection Key (`-`) | `STATUS1` bit 2 |
+| `]` | Click SoftKey 2 | Right Selection Key (`-`) | `STATUS1` bit 3 |
+| `m` / `M` | Click `#` (Menu) | App Shortcuts Menu | Keypad Row 0 Col 1 |
+| `b` / `B` | Click `BACK` | Back / Return Arrow | Keypad Row 0 Col 2 |
 | `Up` Arrow | Click `^` | D-Pad Navigate Up | `STATUS1` bit 4 |
 | `Down` Arrow | Click `v` | D-Pad Navigate Down | `STATUS1` bit 5 |
 | `Left` Arrow | Click `<` | D-Pad Navigate Left | `STATUS1` bit 6 |
 | `Right` Arrow | Click `>` | D-Pad Navigate Right | `STATUS1` bit 7 |
 | `Return` / `Space` | Click `OK` | D-Pad Center OK | `STATUS1` bit 8 |
-| `f` / `F` | Click `[FLIP]` | Clamshell Open $\leftrightarrow$ Closed | GPIO Bank 0 Pin 0 |
-| `p` / `P` | Click `[PAUSE]` | Pause / Resume CPU Execution | Host VM Step Clock |
-| `s` / `S` | Click `[STEP]` | Single Step Instruction Slice | Step 1,000 Instructions |
+| `+` / `=` | Click Vol Up | Side Volume Up Key | GPIO Side Key |
+| `-` | Click Vol Down | Side Volume Down Key | GPIO Side Key |
+| `e` / `E` | Click SOS Button | Emergency SOS Key | Lower Flank SOS Switch |
+| `f` / `F` | Drag Screen Up/Down | Clamshell Flip Open $\leftrightarrow$ Closed | GPIO Bank 0 Pin 0 |
+| `l` / `L` | Click View Toggle | Toggle Phone-Only $\leftrightarrow$ Dev Deck | Layout View Controller |
+| `r` / `R` | Click `RESET` | Cold Reboot Hardware VM | Reset Vector |
+| `Esc` | Click `POWER OFF` | Power Off Emulator | Exit Host Window |
 
 ---
 
 ## 4. Usage
 
-### Launch via Cargo:
+### Launch Native Desktop GUI:
 ```bash
-cargo run --release -p n2660-cli -- --gui tests/baremetal/test_firmware.bin
+# Auto-detects official Nokia PAC container and boots all stages
+cargo run -p n2660-cli -- --gui
+# Or shorthand:
+make gui
 ```
 
-### Launch via Launcher Binary:
+### Launch Directly in Phone-Only View:
 ```bash
-# Launch native desktop GUI
-./bin/n2660emu tests/baremetal/test_firmware.bin --gui
+cargo run -p n2660-cli -- --phone-only
+```
 
-# Launch with clamshell initially closed
-./bin/n2660emu tests/baremetal/test_firmware.bin --gui --flip closed
+### Launch with Clamshell Closed:
+```bash
+cargo run -p n2660-cli -- --gui --flip closed
+```
+
+### Capture Deterministic Screenshot:
+```bash
+cargo run -p n2660-cli -- --screenshot ss-gui.png
 ```

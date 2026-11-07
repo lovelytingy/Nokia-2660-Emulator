@@ -80,15 +80,27 @@ flowchart TD
 ### Milestone 7 — Device Interface
 - [x] Emulate GalaxyCore GC9307 (SPI / LCM) primary 2.8" QVGA (240x320) display controller with ID stream `0x009307`.
 - [x] Emulate Sitronix ST7735 secondary 1.77" QQVGA (120x160) outer clamshell display controller.
+- [x] Decode and render genuine vendor boot splash assets directly from extracted `MMIRes` (`mmi_res_240X320_MH.bin`) using Spreadtrum RLE16 (`0x00001003`) decompression, displaying the authentic Nokia boot logo on GC9307 (240x320) and ST7735 (128x160 center-cropped to 120x160) displays without procedural or hardcoded graphical replacement.
+- [x] Completely eliminate procedural mock home screens (`render_mmi_home`) from firmware execution and keypress pipelines.
 - [x] Emulate 5x5 hardware keypad matrix with real-time down/up event detection.
 - [x] Emulate SC2720 PMIC EIC Pin 1 (Power/End key) and Pin 9 (Key 8).
 - [x] Emulate GPIO Pin 0 Hall effect clamshell flip sensor.
-- [x] Connect genuine firmware framebuffer DMA (`LCDC` `0x20800000` `y_base_addr` and SPI1 `0x70B00000`) to GUI display canvas (removed synthetic 150k instruction mock dialer fallback).
+- [x] Connect genuine firmware framebuffer DMA (`LCDC` `0x20800000` `y_base_addr` and SPI1 `0x70B00000`) to GUI display canvas (removed synthetic mock dialer fallback).
 - [x] Display honest multi-stage boot sequence on physical phone LCD (Stage 1 BOOT0 SPL $\rightarrow$ Stage 2 BOOT1 LK $\rightarrow$ Stage 3 MOCOR RTOS Kernel $\rightarrow$ Stage 4 Userland) with live instruction telemetry.
 
 ### Milestone 8 — Interactive Device
 - [x] Original MOCOR operating system boots cleanly to userland application framework (`MS_MMI_Main` at `0x884A838A` via MMU L1 page table mapping `0x88000000..0x8A000000`).
-- [x] Desktop Cocoa GUI displays live phone interface with interactive T9 dialpad, signal bars, battery meter, clock, date, and multi-stage boot progression.
-- [ ] Render vendor UI assets (fonts, icons, theme elements) directly from extracted `MMIRes` (`mmi_res_240X320_MH.bin`).
+- [x] Render vendor UI assets (QVGA main & QQVGA cover boot splash logos) directly from extracted `MMIRes` (`mmi_res_240X320_MH.bin`) via Spreadtrum RLE16 decoder.
+- [x] Native Desktop Host GUI faithfully replicating the physical Nokia 2660 Flip (TA-1480) Matte Black hardware appearance:
+  - Pill-rounded chassis corners with dual bevel shading.
+  - Glossy obsidian black glass outer cover with camera pill module, dual-tone LED flash, and authentic silver Nokia corporate logotype wordmark.
+  - Authentic silver embossed Nokia corporate wordmark rasterized in the iconic Nokia font, positioned precisely after the earpiece slit above the 2.8" QVGA display (leaving the lower bezel clean above the hinge).
+  - Seamless 3-column continuous keypad grid with large numerals, clean T9 sub-labels (`abc`, `def`, etc.), and Key `5` tactile locator bump.
+  - Interactive tactile side keys on the right flank of the lower base chassis (Volume Up, Volume Down, and dedicated SOS Emergency key), with 3.5mm audio and Micro-USB port cutouts on the left flank.
+  - Physics-accurate 60 FPS clamshell flip opening and closing animation with cosine ease-in-out rotation and dynamic 3D screen foreshortening.
+  - Dual view modes with smooth 60 FPS layout sliding transition: Minimalist centered Phone-Only view (with an elegant floating bottom pill dock that never obstructs the phone) and Split Dev Deck (telemetry deck + interactive UART0 serial console).
+  - Interactive UART0 log console: mouse wheel history scrolling, mouse click-and-drag line selection, and native host OS right-click clipboard copying (`pbcopy`/`wl-copy`/`xclip`/`clip.exe` and `Cmd+C`/`Ctrl+C`) with instant visual feedback banner, keeping the console header sleek and free of synthetic copy buttons.
+  - Natural clamshell touch/mouse drag gestures: drag upper display lid downward to close the clamshell, drag front cover upward to open the clamshell, with `[F]` hotkey and `FLIP [F]` dock/toolbar controls.
+- [ ] Render full userland MMI UI windows directly from firmware DMA buffers without procedural fallbacks.
 - [ ] Physical phone keypad clicks and keyboard inputs dispatch into MOCOR OS internal message queues.
 - [ ] Persistent storage preserves user settings, contacts, and SMS in emulated SPI NAND flash.

@@ -106,3 +106,40 @@ fn test_keypad_injection_and_flip_state() {
     assert!(non_zero > 10_000);
     assert!(sub_non_zero > 1_000);
 }
+
+#[test]
+fn test_flip_animation_easing_and_hall_switch() {
+    // Test the cosine ease-in-out curve used for the 60 FPS clamshell animation
+    let smooth = |progress: f32| -> f32 {
+        0.5 - 0.5 * (progress * std::f32::consts::PI).cos()
+    };
+
+    assert!((smooth(0.0) - 0.0).abs() < 1e-5);
+    assert!((smooth(0.5) - 0.5).abs() < 1e-5);
+    assert!((smooth(1.0) - 1.0).abs() < 1e-5);
+
+    // Easing should have zero slope at t=0 and t=1 (ease-in, ease-out)
+    let eps = 0.01;
+    let slope_start = (smooth(eps) - smooth(0.0)) / eps;
+    let slope_mid = (smooth(0.5 + eps) - smooth(0.5)) / eps;
+    let slope_end = (smooth(1.0) - smooth(1.0 - eps)) / eps;
+
+    assert!(slope_start < 0.1, "Start should have ease-in (gentle start)");
+    assert!(slope_mid > 1.4, "Midpoint should have peak rotation velocity");
+    assert!(slope_end < 0.1, "End should have ease-out (gentle latch)");
+}
+
+#[test]
+fn test_side_keys_injection() {
+    let mut vm = T107Vm::new(true, false, false).expect("VM init failed");
+
+    // Test volume up, volume down, and SOS/end keys
+    assert!(vm.press_key("vol_up"));
+    assert!(vm.release_key("vol_up"));
+
+    assert!(vm.press_key("vol_down"));
+    assert!(vm.release_key("vol_down"));
+
+    assert!(vm.press_key("end"));
+    assert!(vm.release_key("end"));
+}

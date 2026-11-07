@@ -9,6 +9,10 @@
 
 An open-source hardware emulation and reverse-engineering environment for the **Nokia 2660 Flip** (Model **TA-1480**, India variant), powered by the **Unisoc T107 / UMS9117** platform.
 
+<p align="center">
+  <img src="ss-gui.png" alt="Nokia 2660 Flip Native Desktop Host GUI (Model TA-1480, Unisoc T107)" width="880">
+</p>
+
 The goal of this project is to understand and emulate the phone's hardware environment sufficiently to execute and debug firmware components, investigate the original **MOCOR** RTOS, and support the development of **OpenFeatureOS**.
 
 > [!IMPORTANT]
@@ -33,7 +37,14 @@ The goal of this project is to understand and emulate the phone's hardware envir
 ## Features
 
 - **High-Performance Rust Core**: Pure Rust execution engine (`crates/n2660-core`) delivering **16+ MIPS** via zero-cost FFI MMIO hooks, bit-exact peripheral simulation, and ARM IRQ exception vector dispatch.
-- **Authentic Desktop Host GUI**: Native Cocoa/minifb window (`make gui`) featuring a hand-crafted physical Nokia 2660 Flip skin, interactive 3D-embossed keypad with mouse hit-testing, dual LCD pipelines, and clamshell flip simulation (`f`).
+- **Authentic Desktop Host GUI**: Native Cocoa/minifb window (`make gui`) replicating the physical Nokia 2660 Flip hardware:
+  - Slender Matte Black composite chassis with pill-rounded corners and dual-bevel specular shading.
+  - Iconic silver embossed Nokia corporate wordmark positioned after the earpiece.
+  - 60 FPS physics-accurate 3D clamshell flip animation with cosine ease-in-out rotation.
+  - Touch/mouse clamshell drag gestures: drag upper display down to close, drag front cover up to open.
+  - Complete 3-column continuous keypad, chrome squircle D-Pad, Key 5 tactile bump, and side keys (Volume Up, Volume Down, and lower-flank SOS Emergency button).
+  - Dual view modes: Phone-Only view (with an elegant floating bottom pill dock) and Split Dev Deck (telemetry deck + interactive UART0 serial console with native host OS right-click copying).
+  - Genuine vendor boot splash rendering directly from extracted `MMIRes` via Spreadtrum RLE16 decompression.
 - **ANSI Truecolor Terminal TUI**: Real-time terminal interface (`make interactive`) with half-block downsampled dual displays, live T9 keypad matrix, and hardware telemetry.
 - **Reverse-Engineering Toolchain**: Native Rust tools for Spreadtrum BSL protocol framing, BOOT0 image packaging, `.PAC` firmware container unpacking/packing, ATAGS staging, and annotated ARM disassembly.
 - **Zero Proprietary Blobs**: Standalone clean-room ARMv7-A BootROM and baremetal verification firmware.

@@ -220,6 +220,66 @@ impl<const W: usize, const H: usize> LcdController<W, H> {
         }
     }
 
+    /// Loads and decodes an authentic vendor splash bitmap into the framebuffer.
+    ///
+    /// Supports Spreadtrum RLE16 compressed bitmaps (`compression = 0x00001003`) from
+    /// Unisoc `mmi_res` packages, as well as standard uncompressed RGB565 BMPs.
+    /// Correctly honors standard BMP bottom-up scanline ordering (`biHeight > 0`),
+    /// automatically handles center-cropping (e.g. 128x160 logo onto 120x160 sub-display)
+    /// or center-fitting, and marks `has_custom_framebuffer = true`.
+    pub fn load_splash(&mut self, bmp_data: &[u8]) -> bool {
+        let (bmp_w, bmp_h, is_bottom_up) = if bmp_data.len() >= 26 && &bmp_data[0..2] == b"BM" {
+            let w = (i32::from_le_bytes([bmp_data[18], bmp_data[19], bmp_data[20], bmp_data[21]])).unsigned_abs() as usize;
+            let raw_h = i32::from_le_bytes([bmp_data[22], bmp_data[23], bmp_data[24], bmp_data[25]]);
+            let h = raw_h.unsigned_abs() as usize;
+            let bottom_up = raw_h > 0;
+            if w > 0 && h > 0 { (w, h, bottom_up) } else { (W, H, true) }
+        } else {
+            (W, H, true)
+        };
+
+        if let Some(pixels) = decode_sprd_rle16(bmp_data, bmp_w, bmp_h) {
+            if bmp_w == W && bmp_h == H {
+                for sy in 0..H {
+                    let stream_y = if is_bottom_up { H - 1 - sy } else { sy };
+                    for sx in 0..W {
+                        self.framebuffer[sy][sx] = pixels[stream_y * W + sx];
+                    }
+                }
+            } else if bmp_w >= W && bmp_h >= H {
+                // Center-crop (e.g. 128x160 into 120x160)
+                let x_off = (bmp_w - W) / 2;
+                let y_off = (bmp_h - H) / 2;
+                for sy in 0..H {
+                    let stream_y = if is_bottom_up {
+                        (bmp_h - 1) - (sy + y_off)
+                    } else {
+                        sy + y_off
+                    };
+                    for sx in 0..W {
+                        self.framebuffer[sy][sx] = pixels[stream_y * bmp_w + (sx + x_off)];
+                    }
+                }
+            } else {
+                // Center-fit with zero-padding
+                self.framebuffer.fill([0u16; W]);
+                let x_off = (W.saturating_sub(bmp_w)) / 2;
+                let y_off = (H.saturating_sub(bmp_h)) / 2;
+                for img_y in 0..bmp_h.min(H) {
+                    let stream_y = if is_bottom_up { (bmp_h - 1) - img_y } else { img_y };
+                    let sy = y_off + img_y;
+                    for sx in 0..bmp_w.min(W) {
+                        self.framebuffer[sy][x_off + sx] = pixels[stream_y * bmp_w + sx];
+                    }
+                }
+            }
+            self.has_custom_framebuffer = true;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn draw_char(&mut self, x: usize, y: usize, c: u8, color: u16, bg: u16, scale: usize) {
         let idx = if (32..=127).contains(&c) {
             (c - 32) as usize
@@ -383,48 +443,8 @@ impl Gc9307Controller {
 }
 
 impl St7735Controller {
-    pub fn render_cover_screen(&mut self, stage: Option<BootStage>, is_open: bool) {
-        self.fill_rect(0, 0, ST7735_WIDTH, ST7735_HEIGHT, COLOR_DARK_NAVY);
-
-        // Header: Battery & status
-        self.fill_rect(0, 0, ST7735_WIDTH, 18, COLOR_BLACK);
-        self.draw_text(6, 5, "Nokia", COLOR_WHITE, COLOR_BLACK, 1);
-        self.draw_text(75, 5, "85%", COLOR_GREEN, COLOR_BLACK, 1);
-
-        if is_open {
-            self.draw_text(22, 60, "FLIP OPEN", COLOR_YELLOW, COLOR_DARK_NAVY, 1);
-            self.draw_text(14, 80, "Main Screen Active", COLOR_CYAN, COLOR_DARK_NAVY, 1);
-        } else if let Some(stg) = stage {
-            match stg {
-                BootStage::Boot0 => {
-                    self.draw_text(20, 45, "BOOTING", COLOR_WHITE, COLOR_DARK_NAVY, 2);
-                    self.draw_text(25, 75, "Stage 1: BOOT0", COLOR_CYAN, COLOR_DARK_NAVY, 1);
-                    self.draw_text(30, 95, "SPL Init...", COLOR_LIGHT_GRAY, COLOR_DARK_NAVY, 1);
-                }
-                BootStage::Boot1 => {
-                    self.draw_text(20, 45, "BOOTING", COLOR_WHITE, COLOR_DARK_NAVY, 2);
-                    self.draw_text(25, 75, "Stage 2: BOOT1", COLOR_YELLOW, COLOR_DARK_NAVY, 1);
-                    self.draw_text(30, 95, "Loading OS...", COLOR_LIGHT_GRAY, COLOR_DARK_NAVY, 1);
-                }
-                BootStage::Kernel => {
-                    self.draw_text(25, 45, "MOCOR", COLOR_WHITE, COLOR_DARK_NAVY, 2);
-                    self.draw_text(25, 75, "Stage 3: Kernel", COLOR_GREEN, COLOR_DARK_NAVY, 1);
-                    self.draw_text(30, 95, "RTOS Active", COLOR_LIGHT_GRAY, COLOR_DARK_NAVY, 1);
-                }
-                BootStage::User => {
-                    self.draw_text(28, 45, "12:34", COLOR_WHITE, COLOR_DARK_NAVY, 3);
-                    self.draw_text(26, 80, "Fri, 07 Nov", COLOR_CYAN, COLOR_DARK_NAVY, 1);
-                    self.draw_text(18, 105, "4G LTE Active", COLOR_GREEN, COLOR_DARK_NAVY, 1);
-                }
-            }
-        } else {
-            self.draw_text(28, 45, "12:34", COLOR_WHITE, COLOR_DARK_NAVY, 3);
-            self.draw_text(26, 80, "Fri, 07 Nov", COLOR_CYAN, COLOR_DARK_NAVY, 1);
-            self.draw_text(18, 105, "4G LTE Active", COLOR_GREEN, COLOR_DARK_NAVY, 1);
-        }
-
-        // Sub-screen bottom brand
-        self.draw_text(40, 142, "NOKIA", COLOR_LIGHT_GRAY, COLOR_DARK_NAVY, 1);
+    pub fn render_cover_screen(&mut self, _stage: Option<BootStage>, _is_open: bool) {
+        // Procedural mock UI eliminated: outer cover display strictly displays authentic firmware output
     }
 }
 
@@ -440,6 +460,31 @@ impl SprdDisplaySubsystem {
             gc9307: Gc9307Controller::new(),
             st7735: St7735Controller::new(),
         }
+    }
+
+    /// Transfers active firmware display output from primary screen (GC9307 240x320)
+    /// to outer cover screen (ST7735 120x160) using a smooth 2:1 RGB565 box-filter.
+    pub fn transfer_main_to_sub(&mut self) {
+        for sy in 0..ST7735_HEIGHT {
+            let my0 = sy * 2;
+            let my1 = (my0 + 1).min(GC9307_HEIGHT - 1);
+            for sx in 0..ST7735_WIDTH {
+                let mx0 = sx * 2;
+                let mx1 = (mx0 + 1).min(GC9307_WIDTH - 1);
+
+                let p00 = self.gc9307.framebuffer[my0][mx0];
+                let p01 = self.gc9307.framebuffer[my0][mx1];
+                let p10 = self.gc9307.framebuffer[my1][mx0];
+                let p11 = self.gc9307.framebuffer[my1][mx1];
+
+                let r = (((p00 >> 11) & 0x1F) + ((p01 >> 11) & 0x1F) + ((p10 >> 11) & 0x1F) + ((p11 >> 11) & 0x1F) + 2) / 4;
+                let g = (((p00 >> 5) & 0x3F) + ((p01 >> 5) & 0x3F) + ((p10 >> 5) & 0x3F) + ((p11 >> 5) & 0x3F) + 2) / 4;
+                let b = ((p00 & 0x1F) + (p01 & 0x1F) + (p10 & 0x1F) + (p11 & 0x1F) + 2) / 4;
+
+                self.st7735.framebuffer[sy][sx] = ((r & 0x1F) << 11) | ((g & 0x3F) << 5) | (b & 0x1F);
+            }
+        }
+        self.st7735.has_custom_framebuffer = true;
     }
 
     pub fn read_spi0(&self, offset: u32) -> u32 {
@@ -538,5 +583,164 @@ impl SprdDisplaySubsystem {
             }
             _ => {}
         }
+    }
+}
+
+/// Decodes Spreadtrum RLE16 compressed bitmaps (`compression = 0x00001003`) or standard uncompressed 16-bit BMPs.
+///
+/// In Spreadtrum RLE16:
+/// - Commands consist of pairs of bytes (A, B).
+/// - If A == 0 and B == 0: end of line / record separator marker.
+/// - 'A' uncompressed literal 16-bit RGB565 pixels follow in the byte stream.
+/// - Next is 1 pixel value (2 bytes), repeated 'B' times.
+/// - Total pixels decoded per command = A + B.
+pub fn decode_sprd_rle16(data: &[u8], width: usize, height: usize) -> Option<Vec<u16>> {
+    let total = width * height;
+    if data.len() < 14 {
+        return None;
+    }
+
+    let (data_offset, compression, bpp, bmp_w, bmp_h) = if &data[0..2] == b"BM" {
+        let off = if data.len() >= 14 {
+            u32::from_le_bytes([data[10], data[11], data[12], data[13]]) as usize
+        } else {
+            0x42
+        };
+        let (comp, bpp, bw, bh) = if data.len() >= 34 {
+            let bw = (i32::from_le_bytes([data[18], data[19], data[20], data[21]])).unsigned_abs() as usize;
+            let bh = (i32::from_le_bytes([data[22], data[23], data[24], data[25]])).unsigned_abs() as usize;
+            let bpp = u16::from_le_bytes([data[28], data[29]]);
+            let comp = u32::from_le_bytes([data[30], data[31], data[32], data[33]]);
+            (comp, bpp, bw, bh)
+        } else {
+            (0x1003, 16, width, height)
+        };
+        (off, comp, bpp, bw, bh)
+    } else {
+        (0, 0x1003, 16, width, height)
+    };
+
+    if data_offset > data.len() {
+        return None;
+    }
+    let body = &data[data_offset..];
+    let expected_pixels = if bmp_w > 0 && bmp_h > 0 {
+        bmp_w * bmp_h
+    } else {
+        total
+    };
+
+    if compression == 0x1003 {
+        let mut pixels = Vec::with_capacity(expected_pixels);
+        let mut i = 0;
+
+        while i + 1 < body.len() && pixels.len() < expected_pixels {
+            let a = body[i] as usize;
+            let b = body[i + 1] as usize;
+            i += 2;
+
+            if a == 0 && b == 0 {
+                continue;
+            }
+
+            // 'a' literal 16-bit pixels follow
+            for _ in 0..a {
+                if i + 1 < body.len() && pixels.len() < expected_pixels {
+                    let px = u16::from_le_bytes([body[i], body[i + 1]]);
+                    pixels.push(px);
+                    i += 2;
+                }
+            }
+
+            // Next is 1 pixel value repeated 'b' times
+            if b > 0 && i + 1 < body.len() {
+                let px = u16::from_le_bytes([body[i], body[i + 1]]);
+                i += 2;
+                for _ in 0..b {
+                    if pixels.len() < expected_pixels {
+                        pixels.push(px);
+                    }
+                }
+            }
+        }
+
+        if pixels.len() < expected_pixels {
+            pixels.resize(expected_pixels, 0);
+        }
+        Some(pixels)
+    } else if (compression == 0 || compression == 3) && bpp == 16 {
+        let mut pixels = Vec::with_capacity(expected_pixels);
+        for chunk in body.chunks_exact(2).take(expected_pixels) {
+            pixels.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+        }
+        if pixels.len() < expected_pixels {
+            pixels.resize(expected_pixels, 0);
+        }
+        Some(pixels)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sprd_rle16_synthetic_decode() {
+        // Build a synthetic BMP with RLE16 stream
+        let mut bmp = Vec::new();
+        bmp.extend_from_slice(b"BM");
+        let file_size: u32 = 0x42 + 10;
+        bmp.extend_from_slice(&file_size.to_le_bytes()); // size
+        bmp.extend_from_slice(&[0u8; 4]); // reserved
+        bmp.extend_from_slice(&0x42u32.to_le_bytes()); // data offset = 0x42 (66)
+        // DIB header (BITMAPINFOHEADER + bitmasks)
+        bmp.extend_from_slice(&40u32.to_le_bytes()); // header size
+        bmp.extend_from_slice(&4i32.to_le_bytes()); // width = 4
+        bmp.extend_from_slice(&2i32.to_le_bytes()); // height = 2
+        bmp.extend_from_slice(&1u16.to_le_bytes()); // planes = 1
+        bmp.extend_from_slice(&16u16.to_le_bytes()); // bpp = 16
+        bmp.extend_from_slice(&0x1003u32.to_le_bytes()); // compression = 0x1003
+        bmp.extend_from_slice(&[0u8; 20]); // image size, etc.
+        bmp.extend_from_slice(&[0u8; 12]); // RGB565 masks (pad to 66 bytes)
+        assert_eq!(bmp.len(), 0x42);
+
+        // Body: 2 literal pixels (0x1234, 0x5678), then 2 repeats of 0xAAAA
+        // Command 1: a = 2, b = 2
+        bmp.push(2); // a
+        bmp.push(2); // b
+        bmp.extend_from_slice(&0x1234u16.to_le_bytes());
+        bmp.extend_from_slice(&0x5678u16.to_le_bytes());
+        bmp.extend_from_slice(&0xAAAAu16.to_le_bytes());
+        // Command 2: a = 0, b = 4 of 0xFFFF
+        bmp.push(0); // a
+        bmp.push(4); // b
+        bmp.extend_from_slice(&0xFFFFu16.to_le_bytes());
+
+        let decoded = decode_sprd_rle16(&bmp, 4, 2).expect("decode failed");
+        assert_eq!(decoded.len(), 8);
+        assert_eq!(decoded[0], 0x1234);
+        assert_eq!(decoded[1], 0x5678);
+        assert_eq!(decoded[2], 0xAAAA);
+        assert_eq!(decoded[3], 0xAAAA);
+        assert_eq!(decoded[4], 0xFFFF);
+        assert_eq!(decoded[5], 0xFFFF);
+        assert_eq!(decoded[6], 0xFFFF);
+        assert_eq!(decoded[7], 0xFFFF);
+
+        let mut controller = Gc9307Controller::new();
+        assert!(!controller.has_custom_framebuffer);
+        let res = controller.load_splash(&bmp);
+        assert!(res);
+        assert!(controller.has_custom_framebuffer);
+        let x_off = (GC9307_WIDTH - 4) / 2;
+        let y_off = (GC9307_HEIGHT - 2) / 2;
+        // With bottom-up BMPs, stream row 1 (0xFFFF) is top (y_off), stream row 0 (0x1234) is bottom (y_off + 1)
+        assert_eq!(controller.framebuffer[y_off][x_off], 0xFFFF);
+        assert_eq!(controller.framebuffer[y_off + 1][x_off], 0x1234);
+        assert_eq!(controller.framebuffer[y_off + 1][x_off + 1], 0x5678);
+        assert_eq!(controller.framebuffer[y_off + 1][x_off + 2], 0xAAAA);
+        assert_eq!(controller.framebuffer[y_off + 1][x_off + 3], 0xAAAA);
     }
 }

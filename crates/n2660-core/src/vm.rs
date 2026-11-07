@@ -202,21 +202,20 @@ impl T107Vm {
                     match stg {
                         BootStage::Boot0 => {
                             ctx.display.gc9307.render_boot_stage(BootStage::Boot0, "LPDDR2 & IRAM 0x00006200 Ready", pct);
-                            ctx.display.st7735.render_cover_screen(Some(BootStage::Boot0), is_open);
                         }
                         BootStage::Boot1 => {
                             ctx.display.gc9307.render_boot_stage(BootStage::Boot1, "SCI FTL Mounted -> Verifying Kernel...", pct);
-                            ctx.display.st7735.render_cover_screen(Some(BootStage::Boot1), is_open);
                         }
                         BootStage::Kernel => {
                             ctx.display.gc9307.render_boot_stage(BootStage::Kernel, "ThreadX Preemptive Scheduler Active", pct);
-                            ctx.display.st7735.render_cover_screen(Some(BootStage::Kernel), is_open);
                         }
                         BootStage::User => {
                             ctx.display.gc9307.render_boot_stage(BootStage::User, "Userland MS_MMI_Main Active", pct);
-                            ctx.display.st7735.render_cover_screen(Some(BootStage::User), is_open);
                         }
                     }
+                }
+                if !is_open {
+                    ctx.display.transfer_main_to_sub();
                 }
             } else {
                 let ctx = uc.get_data_mut();
@@ -224,12 +223,6 @@ impl T107Vm {
                     let insn_k = ctx.kernel_insn_count / 1_000;
                     let status = format!("* Exec: {}k insns | PC: 0x{:08X}", insn_k, addr);
                     ctx.display.gc9307.render_boot_stage(BootStage::Kernel, &status, 75);
-                } else if ctx.current_stage == Some(BootStage::User) && !ctx.display.gc9307.has_custom_framebuffer {
-                    if ctx.user_insn_count == 250_000 {
-                        let is_open = ctx.gpio.is_flip_open();
-                        ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
-                        ctx.display.st7735.render_cover_screen(None, is_open);
-                    }
                 }
             }
 
@@ -526,7 +519,7 @@ impl T107Vm {
                     let vector_base = if addr < DRAM_BASE { 0x0000_0000u64 } else { 0x8000_0000u64 };
                     println!("[IRQ DISPATCH] Pending IRQs: 0x{:08X} at PC: 0x{:08X} (vector: 0x{:08X})", pending, addr, vector_base + 0x18);
                     let svc_cpsr = cpsr;
-                    let irq_cpsr = (svc_cpsr & !0x1F) | 0x12 | 0x80;
+                    let irq_cpsr = (svc_cpsr & !0x3F) | 0x12 | 0x80;
                     let _ = uc.reg_write(RegisterARM::CPSR, irq_cpsr);
                     let _ = uc.reg_write(RegisterARM::SPSR, svc_cpsr);
                     let _ = uc.reg_write(RegisterARM::LR, addr + 4);
@@ -862,6 +855,9 @@ impl T107Vm {
                                             }
                                         }
                                         ctx.display.gc9307.has_custom_framebuffer = true;
+                                        if !ctx.gpio.is_flip_open() {
+                                            ctx.display.transfer_main_to_sub();
+                                        }
                                     }
                                 }
                             }
@@ -1429,8 +1425,37 @@ impl T107Vm {
                 let load_addr = 0x8800_0000u64;
                 println!("[PAC] Staging UserImg partition '{}' ({} bytes) at 0x{:08X}", f.id, f.data.len(), load_addr);
                 self.load_bytes(&f.data, load_addr)?;
-            } else if id_lower.contains("system") || id_lower.contains("rootfs") || id_lower.contains("mmires") || id_lower.contains("nv") {
-                // Flash storage partitions
+            } else if id_lower.contains("mmires") {
+                println!("[PAC] Staging MMIRes partition '{}' ({} bytes) into SPI NAND at offset 0x01B0_0000", f.id, f.data.len());
+                self.uc.get_data_mut().sfc.load_partition(0x01B0_0000, &f.data);
+
+                // Extract authentic boot splashes from MMIRes sres0001 container
+                if f.data.len() > 0x140 && &f.data[0..8] == b"sres0001" {
+                    let e0_off = u32::from_le_bytes([f.data[0x120], f.data[0x121], f.data[0x122], f.data[0x123]]) as usize;
+                    let e0_sz = u32::from_le_bytes([f.data[0x124], f.data[0x125], f.data[0x126], f.data[0x127]]) as usize;
+                    if e0_off + e0_sz <= f.data.len() {
+                        let splash_bytes = &f.data[e0_off..e0_off + e0_sz];
+                        if self.uc.get_data_mut().display.gc9307.load_splash(splash_bytes) {
+                            println!("[PAC] Loaded authentic Nokia QVGA 240x320 boot splash into GC9307 LCD ({} bytes)", e0_sz);
+                        }
+                    }
+
+                    let e1_off = u32::from_le_bytes([f.data[0x12C], f.data[0x12D], f.data[0x12E], f.data[0x12F]]) as usize;
+                    let e1_sz = u32::from_le_bytes([f.data[0x130], f.data[0x131], f.data[0x132], f.data[0x133]]) as usize;
+                    if e1_off + e1_sz <= f.data.len() {
+                        let sub_splash_bytes = &f.data[e1_off..e1_off + e1_sz];
+                        if self.uc.get_data_mut().display.st7735.load_splash(sub_splash_bytes) {
+                            println!("[PAC] Loaded authentic Nokia QQVGA 128x160 sub-display boot splash into ST7735 LCD ({} bytes)", e1_sz);
+                        }
+                    }
+                } else if f.data.len() >= 14 && &f.data[0..2] == b"BM" {
+                    let _ = self.uc.get_data_mut().display.gc9307.load_splash(&f.data);
+                }
+            } else if id_lower.contains("nv") {
+                println!("[PAC] Staging NV partition '{}' ({} bytes) into SPI NAND at offset 0x01A0_0000", f.id, f.data.len());
+                self.uc.get_data_mut().sfc.load_partition(0x01A0_0000, &f.data);
+            } else if id_lower.contains("system") || id_lower.contains("rootfs") {
+                println!("[PAC] Staging system/rootfs partition '{}' ({} bytes) into SPI NAND", f.id, f.data.len());
                 self.uc.get_data_mut().sfc.load_image(&f.data);
             } else if f.load_addr != 0 && f.load_addr < 0x8000_0000 && (f.load_addr & 0xFFFF_0000) != 0 {
                 // Secondary partitions with explicit non-tag physical address
@@ -1449,21 +1474,25 @@ impl T107Vm {
         ctx.current_stage = Some(stage);
         let is_open = ctx.gpio.is_flip_open();
         let pct = stage.progress_pct();
-        match stage {
-            BootStage::Boot0 => {
-                ctx.display.gc9307.render_boot_stage(BootStage::Boot0, "LPDDR2 & IRAM 0x00006200 Ready", pct);
-            }
-            BootStage::Boot1 => {
-                ctx.display.gc9307.render_boot_stage(BootStage::Boot1, "SCI FTL Mounted -> Verifying Kernel...", pct);
-            }
-            BootStage::Kernel => {
-                ctx.display.gc9307.render_boot_stage(BootStage::Kernel, "ThreadX Preemptive Scheduler Active", pct);
-            }
-            BootStage::User => {
-                ctx.display.gc9307.render_boot_stage(BootStage::User, "Userland MS_MMI_Main Active", pct);
+        if !ctx.display.gc9307.has_custom_framebuffer {
+            match stage {
+                BootStage::Boot0 => {
+                    ctx.display.gc9307.render_boot_stage(BootStage::Boot0, "LPDDR2 & IRAM 0x00006200 Ready", pct);
+                }
+                BootStage::Boot1 => {
+                    ctx.display.gc9307.render_boot_stage(BootStage::Boot1, "SCI FTL Mounted -> Verifying Kernel...", pct);
+                }
+                BootStage::Kernel => {
+                    ctx.display.gc9307.render_boot_stage(BootStage::Kernel, "ThreadX Preemptive Scheduler Active", pct);
+                }
+                BootStage::User => {
+                    ctx.display.gc9307.render_boot_stage(BootStage::User, "Userland MS_MMI_Main Active", pct);
+                }
             }
         }
-        ctx.display.st7735.render_cover_screen(Some(stage), is_open);
+        if !is_open {
+            ctx.display.transfer_main_to_sub();
+        }
     }
 
     pub fn setup_atags(&mut self, atags_addr: u64, board_id: u32, cmdline: Option<String>) -> Result<(), String> {
@@ -1546,9 +1575,6 @@ impl T107Vm {
                         ctx.dial_buffer.push_str(key);
                     }
                 }
-                if ctx.current_stage.is_none() || ctx.current_stage == Some(BootStage::User) {
-                    ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
-                }
             }
             (changed, int_en, int_raw, key_status)
         };
@@ -1582,8 +1608,15 @@ impl T107Vm {
     pub fn set_flip_state(&mut self, is_open: bool) {
         let ctx = self.uc.get_data_mut();
         ctx.gpio.set_flip_state(is_open);
-        let stage = ctx.current_stage;
-        ctx.display.st7735.render_cover_screen(stage, is_open);
+        if !is_open {
+            // When flip switch is activated (closed), transfer actual active firmware output
+            // from the primary main display (GC9307 240x320) to the outer cover display (ST7735 120x160)
+            ctx.display.transfer_main_to_sub();
+        }
+    }
+
+    pub fn transfer_main_to_sub(&mut self) {
+        self.uc.get_data_mut().display.transfer_main_to_sub();
     }
 
     pub fn is_flip_open(&self) -> bool {
