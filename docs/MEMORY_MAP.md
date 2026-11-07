@@ -9,6 +9,7 @@ The following table summarizes the verified physical memory addresses and device
 | Address Range | Size | Region Name | Description | Verification Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `0x00000000 - 0x0003FFFF` | 256 KB | AP Internal SRAM (IRAM) | On-chip fast SRAM. Holds `BOOT0` (`0x00006200`, entry `0x00006400`) and `FDL1` (`0x00006200`). | Verified (Hardware & Dumps) |
+| `0x12000000 - 0x1200FFFF` | 64 KB | ARM Cortex-A7 GIC-400 | Generic Interrupt Controller (Distributor `0x12001000`, CPU Interface `0x12002000`). | Verified (Kernel execution) |
 | `0x20800000 - 0x20801FFF` | 8 KB | SPRD LCDC (Display Controller) | QVGA 240x320 Display Controller with RGB565 framebuffer pointer (`y_base` << 2 at `0x20800024`). | Verified (Baremetal & Dumps) |
 | `0x20E00000 - 0x20E03FFF` | 16 KB | SPRD AHB Clock & Power | Bus clocks, peripheral power domains, and core clock gating. | Verified (Dumps & RE) |
 | `0x21A00000 - 0x21A0FFFF` | 64 KB | SPRD HW SFC (Serial Flash) | Hardware Serial Flash Controller interface to SPI NAND flash (JEDEC ID `0xBAEF`). | Verified (Hardware & Dumps) |
@@ -33,7 +34,7 @@ The following table summarizes the verified physical memory addresses and device
 | `0x60000000 - 0x67FFFFFF` | 128 MB | Direct Flash Window | High-speed direct memory read window (XIP) into SPI NAND. | Verified |
 | `0x70100000 - 0x70100FFF` | 4 KB | SPRD Boot Debug UART | Dedicated bootloader debug UART transmit FIFO. | Verified (Dumps & RE) |
 | `0x71300000 - 0x71300FFF` | 4 KB | SPRD APB Clock Gates | APB bus clock gating and enable flags. | Verified (Dumps & RE) |
-| `0x7E000000 - 0x7FFFFFFF` | 32 MB | ThreadX Heap & Task Stacks | Monolithic RTOS dynamic task stack allocation and heap memory. | Verified (Kernel execution) |
+| `0x72000000 - 0x7FFFFFFF` | 224 MB | ThreadX Heap & Task Stacks | Monolithic RTOS dynamic task stack allocation and heap memory. | Verified (Kernel execution) |
 | `0x80000000 - 0x83FFFFFF` | 64 MB | System DRAM (LPDDR2) | Main physical RAM (Nokia 2660 configuration). `BOOT1` (`0x80100000`), `KernelImg` (`0x80a05e00`). | Verified (Hardware dumps) |
 | `0x88000000 - 0x89FFFFFF` | 32 MB | Userland Application DRAM | `UserImg` MMI task and application framework (`MS_MMI_Main` at `0x88479F6F`). | Verified (Hardware dumps) |
 | `0xA1600000 - 0xA1601FFF` | 8 KB | SPRD ADI Controller | Synchronous serial ADI interface for SC2720 PMIC communication. | Verified (Dumps & RE) |

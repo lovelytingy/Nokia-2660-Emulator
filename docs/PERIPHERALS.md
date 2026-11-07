@@ -316,8 +316,36 @@ Used by bare-metal RAM payloads (`keypad_test.bin`, `baremetal_lcd.bin`, `hello_
    - `CMD_FCLOSE (0x84)`: Close file handle.
    - `CMD_FSEEK (0x85)` / `CMD_FTELL (0x86)`: Cursor positioning and length queries.
    - `CMD_GETARGS (0x87)`: Ingest guest command line arguments (`argc` & `argv`).
+---
 
+## 11. ARM Cortex-A7 GIC-400 (Generic Interrupt Controller)
 
+- **Base Address**: `0x12000000` (Size: `0x00010000` / 64 KB)
+- **Distributor (GICD)**: `0x12001000`
+  - `+0x0000` (`GICD_CTLR`): Distributor Control (`bit 0` = Enable Group 0)
+  - `+0x0004` (`GICD_TYPER`): Interrupt Controller Type (`ITLinesNumber = 3` -> `32 * (3 + 1) = 128` lines)
+- **CPU Interface (GICC)**: `0x12002000`
+  - `+0x0000` (`GICC_CTLR`): CPU Interface Control (`bit 0` = Enable)
+  - `+0x0004` (`GICC_PMR`): Priority Mask Register (`0xFF`)
+  - `+0x000C` (`GICC_IAR`): Interrupt Acknowledge Register (`1023` = Spurious / No IRQ pending)
 
+---
 
+## 12. SPRD PMIC ADI Controller & Read Tag Verification
+
+- **Base Address**: `0x40600000` (Size: `0x00002000` / 8 KB)
+- **Architecture**: Synchronous serial interface between Unisoc AP and SC2720 PMIC analog die.
+- **Read Command (`+0x0028`)**: Guest writes target register address (`target_addr`).
+- **Read Data Buffer (`+0x002C`)**: Hardware completes serial transfer and presents 32-bit response word:
+  - `bit 31`: Busy flag (`0` = Read complete)
+  - `bits 16..30`: Address Tag `(target_addr >> 2) & 0x7FFF`
+  - `bits 0..15`: 16-bit register value read from PMIC
+- **Verification Requirement**: MOCOR RTOS `adi_phy.c` performs strict hardware tag checking:
+  ```c
+  ubfx   r0, r6, #2, #15
+  cmp    r0, r4, lsr #16
+  beq    read_success
+  SCI_ASSERT("((adi_rd_data >> 16) & 0x7FFF) == ((addr >> 2) & 0x7FFF)");
+  ```
+  Providing this tag ensures zero assertion failures during power management and peripheral initialization.
 
