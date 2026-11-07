@@ -18,6 +18,7 @@ __pycache__/
 # Emulation & scratch directories
 build/
 extracted_fw/
+extracted_pac/
 firmware_dumps/
 *.pac
 

@@ -20,7 +20,7 @@ pub const FLASH_DIRECT_BASE: u64 = 0x6000_0000;
 pub const FLASH_DIRECT_SIZE: usize = 128 * 1024 * 1024; // 128 MB
 
 pub const MMIO_BASE: u64 = 0x5000_0000;
-pub const MMIO_SIZE: usize = 0x0010_0000; // 1 MB
+pub const MMIO_SIZE: usize = 16 * 1024 * 1024; // 16 MB Spreadtrum MMIO Window (0x5000_0000..0x5100_0000)
 
 pub const PL011_UART_BASE: u64 = 0x0900_0000;
 pub const PL011_UART_SIZE: usize = 0x1000; // 4 KB
@@ -35,7 +35,7 @@ pub const TRAP_BASE: u64 = 0x4000_0000;
 pub const TRAP_SIZE: usize = 16 * 1024 * 1024; // 16 MB AON Peripheral & Control Window (0x4000_0000..0x4100_0000)
 
 pub const SPRD_DMC_BASE: u64 = 0x3000_0000;
-pub const SPRD_DMC_SIZE: usize = 16 * 1024 * 1024; // 16 MB DDR Controller & PHY (0x3000_0000..0x3100_0000)
+pub const SPRD_DMC_SIZE: usize = 64 * 1024 * 1024; // 64 MB DDR Controller, PHY & Co-Processor Window (0x3000_0000..0x3400_0000)
 
 pub const SPRD_APB_PERIPH_BASE: u64 = 0x7000_0000;
 pub const SPRD_APB_PERIPH_SIZE: usize = 32 * 1024 * 1024; // 32 MB APB Peripherals (0x7000_0000..0x7200_0000)
@@ -47,7 +47,10 @@ pub const SPRD_DEBUG_UART_BASE: u64 = 0x7010_0000;
 pub const SPRD_DEBUG_UART_SIZE: usize = 0x0000_1000; // 4 KB Boot Debug UART
 
 pub const SPRD_SYSTIMER_BASE: u64 = 0x4023_0000;
-pub const SPRD_SYSTIMER_SIZE: usize = 0x0000_1000; // 4 KB AON System Timer
+pub const SPRD_SYSTIMER_SIZE: usize = 0x0000_1000; // 4 KB AON System Timer (BOOT0/SPL)
+
+pub const SPRD_KERNEL_SYSTIMER_BASE: u64 = 0x4004_0000;
+pub const SPRD_KERNEL_SYSTIMER_SIZE: usize = 0x0000_1000; // 4 KB Kernel Hardware Systimer (MOCOR RTOS)
 
 pub const SPRD_HW_SFC_BASE: u64 = 0x21A0_0000;
 pub const SPRD_HW_SFC_SIZE: usize = 0x0001_0000; // 64 KB Hardware Serial Flash Controller (SFC)

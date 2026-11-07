@@ -34,6 +34,7 @@ pub struct VmContext {
     pub dial_buffer: String,
     pub in_call: bool,
     pub kernel_insn_count: u64,
+    pub user_insn_count: u64,
     pub pending_unmapped_page: Option<u64>,
 }
 
@@ -63,6 +64,7 @@ impl T107Vm {
             dial_buffer: String::new(),
             in_call: false,
             kernel_insn_count: 0,
+            user_insn_count: 0,
             pending_unmapped_page: None,
         };
 
@@ -144,6 +146,8 @@ impl T107Vm {
 
         // Initialize PMIC EIC Power Key register in memory (0x40608280) to 2 (bit 1 = 1: Power key released)
         let _ = uc.mem_write(0x4060_8280, &2u32.to_le_bytes());
+        // Initialize AON APB CHIP_ID (0x402E00FC) to 0x98180000 (Unisoc T107 / UMS9117)
+        let _ = uc.mem_write(0x402E_00FC, &0x9818_0000u32.to_le_bytes());
 
         // Setup Instruction Hook & IRQ Dispatcher
         uc.add_code_hook(0, 0xFFFF_FFFF, |uc, addr, _size| {
@@ -169,6 +173,8 @@ impl T107Vm {
                     } else {
                         if ctx.current_stage == Some(BootStage::Kernel) {
                             ctx.kernel_insn_count += 1;
+                        } else if ctx.current_stage == Some(BootStage::User) {
+                            ctx.user_insn_count += 1;
                         }
                         None
                     };
@@ -218,6 +224,246 @@ impl T107Vm {
                     let insn_k = ctx.kernel_insn_count / 1_000;
                     let status = format!("* Exec: {}k insns | PC: 0x{:08X}", insn_k, addr);
                     ctx.display.gc9307.render_boot_stage(BootStage::Kernel, &status, 75);
+                } else if ctx.current_stage == Some(BootStage::User) && !ctx.display.gc9307.has_custom_framebuffer {
+                    if ctx.user_insn_count == 250_000 {
+                        let is_open = ctx.gpio.is_flip_open();
+                        ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
+                        ctx.display.st7735.render_cover_screen(None, is_open);
+                    }
+                }
+            }
+
+            if addr >= 0x80FE_FD8C && addr <= 0x80FE_FE20 {
+                let mut insn_bytes = [0u8; 4];
+                let _ = uc.mem_read(addr, &mut insn_bytes);
+                let insn = u32::from_le_bytes(insn_bytes);
+                if insn == 0xE51F_F004 {
+                    let mut target_bytes = [0u8; 4];
+                    let _ = uc.mem_read(addr + 4, &mut target_bytes);
+                    let target = u32::from_le_bytes(target_bytes);
+                    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                    let mut ttbr0 = unicorn_engine::RegisterARMCP::new().cp(15).crn(2).crm(0).opc1(0).opc2(0);
+                    let _ = uc.reg_read_arm_coproc(&mut ttbr0);
+                    let l1_base = ttbr0.val & !0x3FFF;
+                    println!("[MMU FIX] Mapping Userland DRAM (0x88000000..0x8A000000) into MMU L1 Page Table at 0x{:08X}", l1_base);
+                    for i in 0..32u32 {
+                        let va = 0x8800_0000u32 + (i << 20);
+                        let l1_idx = (va >> 20) as u64;
+                        let desc = va | 0x1DE2; // 1MB Section, Full Access R/W/X, Domain 0
+                        let _ = uc.mem_write(l1_base as u64 + l1_idx * 4, &desc.to_le_bytes());
+                    }
+                    // Flush TLB via CP15 c8 (TLBIALL)
+                    let mut tlb_flush = unicorn_engine::RegisterARMCP::new().cp(15).crn(8).crm(7).opc1(0).opc2(0);
+                    tlb_flush.val = 0;
+                    let _ = uc.reg_write_arm_coproc(&tlb_flush);
+
+                    println!("[USERLAND HANDOFF] Jumping to 0x{:08X} (Thumb: {}) from LR 0x{:08X}", target, (target & 1) != 0, lr);
+                    let _ = uc.reg_write(RegisterARM::PC, (target & !1) as u64);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (target & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                    let _ = uc.emu_stop();
+                }
+            }
+
+            if addr >= 0x8800_0000 && addr < 0x8A00_0000 {
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                if (cpsr & 0x20) == 0 {
+                    let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+                }
+            }
+
+            if addr == 0x80CC_901C {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                if r0 > 100 {
+                    let _ = uc.reg_write(RegisterARM::R0, 100);
+                }
+            }
+
+            if addr == 0x80CC_9054 {
+                let r6 = uc.reg_read(RegisterARM::R6).unwrap_or(0);
+                if r6 > 100 {
+                    let _ = uc.reg_write(RegisterARM::R6, 100);
+                }
+            }
+
+            if addr == 0x80B2_E218 || addr == 0x80B2_E21A {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                if r0 != 0x9818_0000 && r0 != 0x9818_0001 {
+                    let _ = uc.reg_write(RegisterARM::R0, 0x9818_0000);
+                }
+            }
+
+            if addr == 0x811D_702C {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r2 = uc.reg_read(RegisterARM::R2).unwrap_or(0);
+                if r2 != 0 {
+                    let _ = uc.mem_write(r2, &0x8174_7000u32.to_le_bytes());
+                }
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if addr == 0x811D_7856 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                if r1 != 0 {
+                    let mut info_buf = [0u8; 216];
+                    info_buf[140..144].copy_from_slice(&0x0002_0000u32.to_le_bytes()); // 128 KB block size
+                    info_buf[152..156].copy_from_slice(&1024u32.to_le_bytes()); // 1024 blocks
+                    let _ = uc.mem_write(r1, &info_buf);
+                }
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if addr == 0x811D_713A || addr == 0x811D_70D0 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if addr == 0x80A1_4A6A {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                if r0 < 4200 || r0 > 4500 {
+                    let _ = uc.reg_write(RegisterARM::R0, 4200);
+                }
+            }
+
+            if addr == 0x80A1_4AAC {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                if r0 < 6000 || r0 > 9700 {
+                    let _ = uc.reg_write(RegisterARM::R0, 6500);
+                }
+            }
+
+            if addr == 0x80A1_5A4E {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                // Mark NV initialized flags
+                let _ = uc.mem_write(0x8174_33F0, &[1u8, 1u8]);
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                println!("[NVITEM] Handled 0x80A15A4E -> returned 0 to LR 0x{:08X}", lr);
+            }
+
+            if addr == 0x80A1_3D34 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                let r2 = uc.reg_read(RegisterARM::R2).unwrap_or(0);
+                println!("[NVITEM_READ] nvid={} len={} buf=0x{:08X} LR=0x{:08X}", r0, r1, r2, lr);
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if addr == 0x80A1_7472 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                println!("[CHARGE] 0x80A17472: dischg=0x{:08X}, chg=0x{:08X}, LR=0x{:08X}", r0, r1, lr);
+
+                // Default Nokia battery voltage calibration curve (12 points in mV)
+                let dischg_curve: [u16; 12] = [3400, 3500, 3600, 3650, 3700, 3750, 3800, 3850, 3900, 4000, 4100, 4180];
+                let chg_curve: [u16; 12] = [3500, 3600, 3700, 3750, 3800, 3850, 3900, 3950, 4050, 4120, 4180, 4200];
+
+                if r0 != 0 {
+                    for (i, val) in dischg_curve.iter().enumerate() {
+                        let _ = uc.mem_write(r0 + (i * 2) as u64, &val.to_le_bytes());
+                    }
+                }
+                if r1 != 0 {
+                    for (i, val) in chg_curve.iter().enumerate() {
+                        let _ = uc.mem_write(r1 + (i * 2) as u64, &val.to_le_bytes());
+                    }
+                }
+            }
+
+            if addr == 0x80E0_9D68 {
+                let _r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r4 = uc.reg_read(RegisterARM::R4).unwrap_or(0);
+                let r6 = uc.reg_read(RegisterARM::R6).unwrap_or(0);
+                let r7 = uc.reg_read(RegisterARM::R7).unwrap_or(0);
+                let r8 = uc.reg_read(RegisterARM::R8).unwrap_or(0);
+                let mut ptr_bytes = [0u8; 4];
+                let _ = uc.mem_read(r8, &mut ptr_bytes);
+                let mbox_base = u32::from_le_bytes(ptr_bytes);
+                let mut status_bytes = [0u8; 4];
+                let _ = uc.mem_read((mbox_base + 0x14) as u64, &mut status_bytes);
+                let mbox_stat = u32::from_le_bytes(status_bytes);
+                if uc.get_data_mut().logged_traps.insert(0x80E09D68) {
+                    println!("[MBOX] Poll loop at 0x80E09D68: r8=0x{:08X} -> mbox_base=0x{:08X}, [base+0x14]=0x{:08X}, r4=0x{:08X}, r6=0x{:08X}, r7=0x{:08X}",
+                        r8, mbox_base, mbox_stat, r4, r6, r7);
+                }
+            }
+
+            if addr == 0x80E0_9D08 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                println!("[MBOX] Entered 0x80E09D08 from LR 0x{:08X}: r0=0x{:08X}, r1=0x{:08X}", lr, r0, r1);
+                // Ensure g_mboX_inited (0x81778E79) is marked as initialized
+                let _ = uc.mem_write(0x8177_8E79, &[1u8]);
+
+                // Ensure mbox_cfg at 0x81B49EE0 has its base address set to 0x400A0000
+                let mut mbox_cfg_buf = [0u8; 0x38];
+                mbox_cfg_buf[0..4].copy_from_slice(&0x400A_0000u32.to_le_bytes()); // AP mailbox base
+                mbox_cfg_buf[4..8].copy_from_slice(&0x1000u32.to_le_bytes());
+                mbox_cfg_buf[8..12].copy_from_slice(&1u32.to_le_bytes());
+                mbox_cfg_buf[12..16].copy_from_slice(&0xFFFF_FFFCu32.to_le_bytes());
+                mbox_cfg_buf[16..20].copy_from_slice(&0x400A_8000u32.to_le_bytes()); // CP mailbox base
+                mbox_cfg_buf[20..24].copy_from_slice(&0x1000u32.to_le_bytes());
+                mbox_cfg_buf[24..28].copy_from_slice(&0x80u32.to_le_bytes());
+                mbox_cfg_buf[28..32].copy_from_slice(&0xFFFF_FFFEu32.to_le_bytes());
+                mbox_cfg_buf[32..36].copy_from_slice(&0x18u32.to_le_bytes());
+                let _ = uc.mem_write(0x81B4_9EE0, &mbox_cfg_buf);
+            }
+
+            if addr == 0x80AC_7640 || addr == 0x80CA_C5FC || addr == 0x80CA_C634 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let mut cur_thread = [0u8; 4];
+                let _ = uc.mem_read(0x8174_2174, &mut cur_thread);
+                let cur_thread_val = u32::from_le_bytes(cur_thread);
+                if cur_thread_val == 0 || cur_thread_val == 0xF0F0_F0F0 {
+                    // Called during early boot initialization before scheduler thread context switch:
+                    // Return TX_SUCCESS (0)
+                    if addr == 0x80AC_7640 && r0 != 0 {
+                        let _ = uc.mem_write(r0, &0u32.to_le_bytes());
+                    }
+                    let _ = uc.reg_write(RegisterARM::R0, 0);
+                    let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                }
+            }
+
+            if addr == 0x810D_6FF6 {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                if r0 == 0 {
+                    println!("[SCI_PUT_MUTEX] Called with NULL from LR 0x{:08X}", lr);
+                    // Prevent assert on NULL mutex release during early init: return SCI_SUCCESS (0)
+                    let _ = uc.reg_write(RegisterARM::R0, 0);
+                    let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
                 }
             }
 
@@ -507,6 +753,26 @@ impl T107Vm {
             },
         ).map_err(|e| format!("Failed to add SYSTIMER read hook: {:?}", e))?;
 
+        // Setup SPRD Kernel AON System Timer Read Hook (0x4004_0000..0x4004_1000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_KERNEL_SYSTIMER_BASE,
+            SPRD_KERNEL_SYSTIMER_BASE + SPRD_KERNEL_SYSTIMER_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_KERNEL_SYSTIMER_BASE) as u32;
+                let val: u32 = match offset {
+                    0x0000 | 0x0004 | 0x000C => {
+                        // Monotonically advancing counter (1 tick per 16 instructions)
+                        (uc.get_data().instruction_count >> 4) as u32
+                    }
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add Kernel SYSTIMER read hook: {:?}", e))?;
+
         // Setup SPRD Hardware SFC Hooks (0x21A0_0000..0x21A1_0000)
         uc.add_mem_hook(
             HookType::MEM_READ,
@@ -699,6 +965,7 @@ impl T107Vm {
                         }
                         eic_val
                     }
+                    0x0314 => 0xFFFF, // SC2720 PMIC eFuse status register ready
                     _ => 0,
                 };
                 let bytes = val.to_le_bytes();
@@ -726,6 +993,8 @@ impl T107Vm {
                             eic_val |= 1 << 9;
                         }
                         eic_val
+                    } else if (target_addr & 0xFFFF) == 0x8314 || (target_addr & 0xFFF) == 0x0314 {
+                        0xFFFFu32 // SC2720 PMIC eFuse status register ready
                     } else {
                         let mut resp_bytes = [0u8; 4];
                         let _ = uc.mem_read(target_addr, &mut resp_bytes);
@@ -1204,12 +1473,12 @@ impl T107Vm {
 
     pub fn step(&mut self, count: usize, timeout_us: u64) -> Result<bool, String> {
         let mut pc = self.uc.reg_read(RegisterARM::PC).unwrap_or(self.entry_point);
-        let cpsr = self.uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
-        if (cpsr & 0x20) != 0 {
+        let mut cpsr = self.uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+        if (cpsr & 0x20) != 0 || (pc & 1) != 0 || (pc >= 0x8800_0000 && pc < 0x8A00_0000) {
             pc |= 1;
+            cpsr |= 0x20;
+            let _ = self.uc.reg_write(RegisterARM::CPSR, cpsr);
         }
-        // Avoid spawning background timer thread when instruction count is specified,
-        // preventing race conditions with Apple JIT write-protection (uc->nested assertion).
         let effective_timeout = if count > 0 { 0 } else { timeout_us };
         match self.uc.emu_start(pc, 0xFFFF_FFFF, effective_timeout, count) {
             Ok(_) => Ok(true),
@@ -1263,7 +1532,7 @@ impl T107Vm {
                         ctx.dial_buffer.push_str(key);
                     }
                 }
-                if ctx.current_stage.is_none() {
+                if ctx.current_stage.is_none() || ctx.current_stage == Some(BootStage::User) {
                     ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
                 }
             }

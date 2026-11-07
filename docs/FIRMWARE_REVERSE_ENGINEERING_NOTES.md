@@ -152,3 +152,26 @@ Upon entry at `0x80a06000`:
 - **Bare-Metal Payloads Verified:**
   - `baremetal_lcd.bin`: 13.2M instructions at 6.59 MIPS, live 240x320 framebuffer refresh confirmed.
   - `baremetal_asm.bin`: 18M instructions at 9.02 MIPS, verified all 5 mailbox markers at `0x80700100` (`0x14802660`, `0xCAFEBABE`, `0xDEADBEEF`, loop counter `1048575`, status `1`).
+
+---
+
+## 8. Userland Handoff & MMU Page Table Architecture
+
+### Kernel to Userland Transition
+The MOCOR RTOS kernel completes its device initialization sequence and invokes the userland application framework (`UserImg`) via an interworking branch:
+1. **Kernel Call (`0x80B2EA8C`)**: Thumb-2 instruction `blx 0x80fefd8c`.
+2. **ARM Veneer Trampoline (`0x80FEFD8C`)**: `ldr pc, [pc, #-4]` loading `0x884A838B` from the literal pool at `0x80FEFD90`.
+3. **Userland Entry (`0x884A838A`)**: `MS_MMI_Main` entry in `EXEC_USER_IMAGE.bin`.
+
+### Resolving CP15 MMU Page Table Translation Faults
+In full firmware execution, the kernel configures CP15 `SCTLR` (`0x00C5107F`) with the MMU enabled (`SCTLR.M = 1`).
+- The Translation Table Base Register (`TTBR0`) points to the first-level page table at `0x81640000`.
+- During kernel bringup, entries for `0x88000000`..`0x88F00000` (Userland DRAM) were initialized with coarse page table descriptors pointing to L2 tables (`0x81644400`..`0x81648000`). Because the physical flash partitions had not yet populated these second-level entries, all L2 PTEs were zero, triggering an instruction prefetch abort (`EXCP_PREFETCH_ABORT`).
+- **Solution:** The emulator maps the 32 MB userland DRAM window (`0x88000000`..`0x8A000000`) directly into the L1 page table at `0x81640000` using standard 1 MB section descriptors (`va | 0x1DE2`, Full Read/Write/Execute access) and performs an architectural TLB flush via CP15 c8 (`TLBIALL`).
+- With the page table entries established, the CPU hardware MMU seamlessly executes userland code at 5+ MIPS across 75+ million instructions without faults.
+
+### Key Hardware Intercepts Solved
+- **PMIC eFuse Polling Loop (`0x80D61EFA..0x80D61F1A`)**: Intercepted reads of `0x40608314` (SC2720 PMIC eFuse status) to return `0xFFFF` (`ready`), preventing 300,000 tick delay loops.
+- **LCD Backlight Assertion (`lcd_backlight.c:411`)**: Clamped brightness requests at `0x80CC901C` and `0x80CC9054` to `<= 100`.
+- **AON APB Chip ID (`0x402E00FC`)**: Pre-initialized to `0x98180000` (Unisoc T107 / UMS9117-L), satisfying `init.c:290`.
+- **BML Flash Partition Emulation (`0x811D702C..0x811D7856`)**: Emulated Block Management Layer partition handles and 128 KB block geometry, satisfying `init.c:275`.
