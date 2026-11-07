@@ -13,6 +13,8 @@ struct Cli {
     binary: PathBuf,
     #[arg(short = 'b', long, default_value = "0x80000000")]
     base: String,
+    #[arg(short = 'o', long, default_value = "0x0")]
+    offset: String,
     #[arg(short = 'n', long, default_value_t = 40)]
     count: usize,
     #[arg(short = 't', long)]
@@ -58,8 +60,10 @@ fn get_t107_symbols() -> HashMap<u64, &'static str> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let code = fs::read(&cli.binary)?;
+    let code_all = fs::read(&cli.binary)?;
     let base_addr = parse_u64(&cli.base);
+    let offset = parse_u64(&cli.offset) as usize;
+    let code = if offset < code_all.len() { &code_all[offset..] } else { &code_all[..] };
 
     let mode = if cli.thumb {
         arch::arm::ArchMode::Thumb

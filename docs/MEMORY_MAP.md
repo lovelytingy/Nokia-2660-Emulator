@@ -8,9 +8,17 @@ The following table summarizes the verified physical memory addresses and device
 
 | Address Range | Size | Region Name | Description | Verification Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `0x00000000 - 0x0000FFFF` | 64 KB | AP Internal SRAM (IRAM) | On-chip fast SRAM. Holds `FDL1` (loaded at `0x00006200`). Stack starts at top of SRAM. | Verified (Spreadtrum BSL & FDL specs) |
-| `0x00010000 - 0x00012FFF` | 12 KB | Shared SRAM / SBUF | Audio, AON, and inter-processor communication buffers. | Documented |
-| `0x40000000 - 0x4FFFFFFF` | 256 MB | AON & Core Peripherals | Clock controller, power management, watchdog, reset controller. | Documented in Unisoc datasheets |
+| `0x00000000 - 0x0003FFFF` | 256 KB | AP Internal SRAM (IRAM) | On-chip fast SRAM. Holds `BOOT0` (`0x00006200`, entry `0x00006400`) and `FDL1` (`0x00006200`). | Verified (Hardware & Dumps) |
+| `0x20800000 - 0x20801FFF` | 8 KB | SPRD LCDC (Display Controller) | QVGA 240x320 Display Controller with RGB565 framebuffer pointer (`y_base` << 2 at `0x20800024`). | Verified (Baremetal & Dumps) |
+| `0x20E00000 - 0x20E03FFF` | 16 KB | SPRD AHB Clock & Power | Bus clocks, peripheral power domains, and core clock gating. | Verified (Dumps & RE) |
+| `0x21A00000 - 0x21A0FFFF` | 64 KB | SPRD HW SFC (Serial Flash) | Hardware Serial Flash Controller interface to SPI NAND flash (JEDEC ID `0xBAEF`). | Verified (Hardware & Dumps) |
+| `0x30000000 - 0x3000FFFF` | 64 KB | SPRD DMC / DDR Delay PHY | Dynamic Memory Controller, BIST registers, and DLL delay lines. | Verified (Dumps & RE) |
+| `0x40230000 - 0x40230FFF` | 4 KB | SPRD AON Systimer | Free-running monotonic system microsecond timer. | Verified (Hardware & Dumps) |
+| `0x40250000 - 0x40250FFF` | 4 KB | SPRD Keypad Matrix | APB Keypad matrix scanner (STATUS0 & STATUS1). | Verified (Hardware & Dumps) |
+| `0x402A0000 - 0x402A1FFF` | 8 KB | SPRD AON Pinmux & Boot Straps | Hardware boot key pinmux (Key 7 UART mode, Key 3 JTAG mode). | Verified (Dumps & RE) |
+| `0x402E0000 - 0x402E3FFF` | 16 KB | SPRD Secure Boot & Sys Ctrl | UMS9117 Chip ID (`0x91170000`) and security gate status. | Verified (Dumps & RE) |
+| `0x40600000 - 0x40601FFF` | 8 KB | SPRD PMIC ADI Base | SC2720 PMIC ADI bus controller. | Verified (Hardware & Dumps) |
+| `0x40608000 - 0x4060BFFF` | 16 KB | SPRD PMIC EIC & APB | PMIC power key (`0x40608280`), Torch LED (`0x40608df4`), Vibrator (`0x40608e00`). | Verified (Hardware & Dumps) |
 | `0x50000000 - 0x50000FFF` | 4 KB | SPRD UART0 (Debug Serial) | Main serial console and FDL UART channel. | Verified (Linux `sprd_serial.c`) |
 | `0x50010000 - 0x50010FFF` | 4 KB | SPRD UART1 | Secondary serial interface / AT command port. | Documented |
 | `0x50020000 - 0x50020FFF` | 4 KB | SPRD UART2 | Bluetooth / Modem communication port. | Documented |
@@ -23,22 +31,28 @@ The following table summarizes the verified physical memory addresses and device
 | `0x500A0000 - 0x500A0FFF` | 4 KB | SPRD SFC (Flash Controller)| Serial Flash Controller interface to 128 MB SPI NAND flash. | Verified |
 | `0x500C0000 - 0x500C0FFF` | 4 KB | SPRD Audio Subsystem | Audio DAC, PCM FIFO streaming, speaker/headphone routing & buzzer tone generator. | Verified |
 | `0x60000000 - 0x67FFFFFF` | 128 MB | Direct Flash Window | High-speed direct memory read window (XIP) into SPI NAND. | Verified |
-| `0x70000000 - 0x7FFFFFFF` | 256 MB | System Bus Matrix / Crypto | Security engine, DMA controller, fast bus arbitration. | Documented |
-| `0x80000000 - 0x82FFFFFF` | 48 MB | System DRAM (LPDDR2) | Main physical RAM (Nokia 2660 configuration). `FDL2` loaded at `0x80100000`. Kernel loaded at `0x80000000+`. | Verified (`spd_dump` dumps & vendor specs) |
-| `0xFFFF0000 - 0xFFFFFFFF` | 64 KB | High Vector BootROM | CPU boot exception vector before remap to SRAM. | Verified (Clean-Room BootROM & Vector Table) |
+| `0x70100000 - 0x70100FFF` | 4 KB | SPRD Boot Debug UART | Dedicated bootloader debug UART transmit FIFO. | Verified (Dumps & RE) |
+| `0x71300000 - 0x71300FFF` | 4 KB | SPRD APB Clock Gates | APB bus clock gating and enable flags. | Verified (Dumps & RE) |
+| `0x7E000000 - 0x7FFFFFFF` | 32 MB | ThreadX Heap & Task Stacks | Monolithic RTOS dynamic task stack allocation and heap memory. | Verified (Kernel execution) |
+| `0x80000000 - 0x83FFFFFF` | 64 MB | System DRAM (LPDDR2) | Main physical RAM (Nokia 2660 configuration). `BOOT1` (`0x80100000`), `KernelImg` (`0x80a05e00`). | Verified (Hardware dumps) |
+| `0x88000000 - 0x89FFFFFF` | 32 MB | Userland Application DRAM | `UserImg` MMI task and application framework (`MS_MMI_Main` at `0x88479F6F`). | Verified (Hardware dumps) |
+| `0xA1600000 - 0xA1601FFF` | 8 KB | SPRD ADI Controller | Synchronous serial ADI interface for SC2720 PMIC communication. | Verified (Dumps & RE) |
+| `0xA1610000 - 0xA1611FFF` | 8 KB | SPRD Analog Die Window | Analog die configuration and status registers. | Verified (Dumps & RE) |
+| `0xFFFF0000 - 0xFFFFFFFF` | 64 KB | High Vector BootROM | CPU boot exception vector before remap to SRAM. | Verified (Clean-Room BootROM) |
 
 ---
 
 ## 2. Bootloader & Firmware Load Addresses
 
-| Binary Component | Target Address | Execution Mode | Purpose |
-| :--- | :--- | :--- | :--- |
-| **BootROM** | `0xFFFF0000` / `0x00000000` | ARM / Supervisor | Initial chip ROM. Checks boot key (e.g. `*` key), handles USB/UART download mode handshake. |
-| **FDL1 (First Downloader)** | `0x00006200` | ARM32 (SRAM) | Initializes clocks, PLLs, PMU, and DDR memory controller. |
-| **FDL2 (Second Downloader)**| `0x80100000` | ARM32 (DRAM) | Flash driver payload; handles read/write of flash partitions over USB/UART. |
-| **BOOT0 / SPL** | `0x00006200` or `0x80000000` | ARM32 | Secondary Program Loader on cold boot. |
-| **BOOT1 / LK (Little Kernel)**| `0x80020000` | ARM32 | Hardware abstraction layer, LCD init splash screen, kernel loader. |
-| **MOCOR OS / RTOS** | `0x80040000` | ARM32 / Thumb-2 | Main feature phone operating system image. |
+| Binary Component | Target Load Address | Entry Point | Execution Mode | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| **BootROM** | `0xFFFF0000` / `0x00000000` | `0x00000000` | ARM / Supervisor | Initial chip ROM. Checks boot keys (`*`), handles USB/UART BSL download handshake. |
+| **FDL1 (First Downloader)** | `0x00006200` | `0x00006400` | ARM / Thumb | Initializes clocks, PLLs, PMU, and DDR memory controller over USB. |
+| **FDL2 (Second Downloader)**| `0x80020000` / `0x80100000` | `0x80100220` | ARM / Thumb | Flash driver payload; handles read/write of flash partitions over USB. |
+| **BOOT0 / SPL** | `0x00006200` | `0x00006400` | ARM -> Thumb | First on-NAND stage. Trains LPDDR2 controller, loads `BOOT1`. |
+| **BOOT1 / Secondary Loader**| `0x80100000` | `0x80100200` (stub -> `0x80100220`) | ARM -> Thumb | Initializes FTL, verifies `KernelImg`, hands off to kernel in ARM mode. |
+| **KernelImg (MOCOR RTOS)** | `0x80a05e00` | `0x80a06000` (stub -> `0x80a061f0`) | ARM -> Thumb-2 | Core monolithic OS: ThreadX scheduler, device drivers, cellular stacks. |
+| **UserImg (Application Layer)**| `0x88000000` | `0x88479f6f` (`MS_MMI_Main`) | Thumb-2 | MMK Window Manager, UI theme engine, phonebook, native applications. |
 
 ---
 

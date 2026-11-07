@@ -7,6 +7,15 @@ pub const SRAM_SIZE: usize = 256 * 1024; // 256 KB On-Chip SYSRAM/IRAM
 pub const DRAM_BASE: u64 = 0x8000_0000;
 pub const DRAM_SIZE: usize = 48 * 1024 * 1024; // 48 MB
 
+pub const DRAM_EXT_BASE: u64 = 0x8300_0000;
+pub const DRAM_EXT_SIZE: usize = 16 * 1024 * 1024; // 16 MB extended (completing full 64 MB DRAM window)
+
+pub const USER_DRAM_BASE: u64 = 0x8800_0000;
+pub const USER_DRAM_SIZE: usize = 32 * 1024 * 1024; // 32 MB userland application DRAM window
+
+pub const SYS_HEAP_BASE: u64 = 0x7E00_0000;
+pub const SYS_HEAP_SIZE: usize = 32 * 1024 * 1024; // 32 MB ThreadX Task Stack & Dynamic Heap Window
+
 pub const FLASH_DIRECT_BASE: u64 = 0x6000_0000;
 pub const FLASH_DIRECT_SIZE: usize = 128 * 1024 * 1024; // 128 MB
 
@@ -30,6 +39,36 @@ pub const SPRD_SYSTIMER_SIZE: usize = 0x0000_1000; // 4 KB AON System Timer
 
 pub const SPRD_HW_SFC_BASE: u64 = 0x21A0_0000;
 pub const SPRD_HW_SFC_SIZE: usize = 0x0001_0000; // 64 KB Hardware Serial Flash Controller (SFC)
+
+pub const SPRD_LCDC_BASE: u64 = 0x2080_0000;
+pub const SPRD_LCDC_SIZE: usize = 0x0000_2000; // 8 KB Display Controller
+
+pub const SPRD_AHB_BASE: u64 = 0x20E0_0000;
+pub const SPRD_AHB_SIZE: usize = 0x0000_4000; // 16 KB AHB Clocks & Power
+
+pub const SPRD_KEYPAD_BASE: u64 = 0x4025_0000;
+pub const SPRD_KEYPAD_SIZE: usize = 0x0000_1000; // 4 KB Keypad Matrix
+
+pub const SPRD_AON_PINMUX_BASE: u64 = 0x402A_0000;
+pub const SPRD_AON_PINMUX_SIZE: usize = 0x0000_2000; // 8 KB AON Pinmux
+
+pub const SPRD_SECURE_BOOT_BASE: u64 = 0x402E_0000;
+pub const SPRD_SECURE_BOOT_SIZE: usize = 0x0000_4000; // 16 KB Security & System Control
+
+pub const SPRD_PMIC_ADI_BASE: u64 = 0x4060_0000;
+pub const SPRD_PMIC_ADI_SIZE: usize = 0x0000_2000; // 8 KB PMIC ADI Base
+
+pub const SPRD_PMIC_EIC_BASE: u64 = 0x4060_8000;
+pub const SPRD_PMIC_EIC_SIZE: usize = 0x0000_4000; // 16 KB PMIC EIC & APB
+
+pub const SPRD_APB_CLK_BASE: u64 = 0x7130_0000;
+pub const SPRD_APB_CLK_SIZE: usize = 0x0000_1000; // 4 KB APB Clock Gates
+
+pub const SPRD_ADI_CTRL_BASE: u64 = 0xA160_0000;
+pub const SPRD_ADI_CTRL_SIZE: usize = 0x0000_2000; // 8 KB ADI Controller
+
+pub const SPRD_ADI_ANALOG_BASE: u64 = 0xA161_0000;
+pub const SPRD_ADI_ANALOG_SIZE: usize = 0x0000_2000; // 8 KB Analog Die Window
 
 // Peripheral MMIO Offsets
 pub const SPRD_UART0_BASE: u32 = 0x5000_0000;

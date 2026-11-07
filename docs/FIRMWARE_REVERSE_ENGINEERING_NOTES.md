@@ -96,25 +96,59 @@ Inside the cache cleaning routine at `0xC1D4`:
 | Partition | Size (bytes) | PAC Load Address | Emulator Staging Address | Entry Point | State |
 |-----------|-------------|------------------|--------------------------|-------------|-------|
 | `BOOT0`   | 31,620      | `0x80000001`     | `0x0000_6200` (IRAM)     | `0x0000_6400` | ARM -> Thumb |
-| `BOOT1`   | 161,364     | `0x80000002`     | `0x8010_0000` (DRAM)     | `0x8010_0200` | ARM mode |
-| `Kernel`  | 12,976,468  | `0x80000003`     | `0x8000_0000` (DRAM)     | `0x8000_0000` | ARM mode |
+| `BOOT1`   | 161,364     | `0x80000002`     | `0x8010_0000` (DRAM)     | `0x8010_0200` | ARM -> Thumb |
+| `Kernel`  | 12,976,468  | `0x80000003`     | `0x80a0_5e00` (DRAM)     | `0x80a0_6000` | ARM -> Thumb-2 |
+| `UserImg` | 11,834,228  | `0x80000004`     | `0x8800_0000` (DRAM)     | `0x8847_9F6F` | Thumb-2 |
 | `FDL1`    | 32,596      | `0x40000000`     | `0x0000_6200` (IRAM)     | `0x0000_6400` | Flashing only |
-| `FDL2`    | 63,924      | `0x00000000`     | `0x8002_0000` (DRAM)     | `0x8002_0000` | Flashing only |
+| `FDL2`    | 63,924      | `0x00000000`     | `0x8002_0000` (DRAM)     | `0x8010_0220` | Flashing only |
 
-> **Note on DHTB Headers:** Both `boot0.bin` and `boot1.bin` are packaged with a 512-byte (`0x200`) Unisoc DHTB security header. Code execution begins at `staged_base + 0x200`.
+> **Critical Fix in Kernel Staging Address:** In earlier sessions, `KernelImg` was staged at `0x8000_0000`. Because `KernelImg` is 12.97 MB, this directly overwrote `0x8010_0000`..`0x8012_7640` where `BOOT1` resides. Reverse engineering `boot1.bin` confirmed that `KernelImg` is compiled with a DHTB header base at **`0x80a0_5e00`**, with its ARM reset vector at **`0x80a0_6000`** (`+0x200`) jumping to the hardware bringup stub at **`0x80a0_61f0`**.
 
 ---
 
-## 5. Next Steps for Tomorrow
+## 5. BOOT1 -> MOCOR Kernel Transition Architecture
 
-1. **CP15 CCSIDR Fast-Forward / Set-Way Loop Tuning:**
-   - In `0xC524`, `boot0.bin` reads CCSIDR (`mrc p15, 1, r1, c0, c0, 0`).
-   - The default value causes an inner loop iterating `1024 * 32768` (~33.5M) cycles.
-   - Hook or optimize CP15 / hook PC `0x00006468` to complete cache flush instantly or hook `0xC1D4` return.
-2. **Execute BOOT1 (`0x80100200`):**
-   - Verify that `0x80100200` executes in ARM mode.
-   - Monitor `0x70100000` UART logs as `boot1` performs partition swapping, checks security keys, and locates `KernelImg`.
-3. **Kernel Stage Handoff:**
-   - Follow `boot1`'s handoff of execution to `0x80000000` (`KernelImg` - MOCOR OS).
-4. **Display Framebuffer Hook:**
-   - Direct display engine output into the desktop GUI window.
+### 5.1 FTL Superblock & Recovery Mode Bypass
+In `boot1.bin`:
+1. `0x801005C4` and `0x80100700` invoke `SCI_FTL_Load(0)` at `0x801136E0`.
+2. When physical flash superblocks are unpopulated, `SCI_FTL_Load` returns error code `3` (`FTL_NOT_FORMATTED`), falling into recovery mode (`rsupdate`), which attempts to call an unpopulated flash routine pointer.
+3. In `n2660-core`, we intercept `SCI_FTL_Load` (`0x801136E0`):
+   - Sets device state `*(0x80571af0) = 2` (LOADED / OPEN).
+   - Writes valid geometry attributes (sector size 2048, erase unit 64, total sectors 1024).
+   - Returns `r0 = 0` (SUCCESS).
+4. `SCI_FTL_GetDevInfo` at `0x80113C30` verifies `*(0x80571af0) == 2` and succeeds.
+
+### 5.2 Kernel Handoff Sequence
+At `0x8010070E`:
+1. `bl #0x80100c24` calls `load_kernel()`. Since `KernelImg` is already staged in DRAM at `0x80a05e00`, `load_kernel()` returns `r0 = 1` (SUCCESS).
+2. `boot1` logs `"load kernel suc"`.
+3. Calls `is_secure_boot_enabled()` (`0x80102048`), which returns 0.
+4. `cbz r0, #0x80100766` jumps straight to handoff:
+   - Prints `"run kernel:%x"`.
+   - Loads `r4 = 0x80a06000` (Kernel reset entry).
+   - Executes `blx #0x80100274`.
+5. At `0x80100274`: Executes clean ARM mode CP15 cache purge, disables MMU in SCTLR, and executes `mov pc, r0`, transferring execution directly to `0x80a06000`.
+
+---
+
+## 6. MOCOR OS Kernel Bring-Up
+
+Upon entry at `0x80a06000`:
+1. `0x80a06000: ldr pc, [pc]` loads `0x80a061f0` into PC in ARM mode.
+2. `0x80a061f0`: System Control Register (`SCTLR`): clears bit 13 (`0x2000`) to enforce low exception vectors (`0x00000000`).
+3. Coprocessor Access (`CPACR` & `FPEXC`): Enables CP10 and CP11 coprocessors (`0x00F0_0000`) and executes `vmsr fpexc, r0` (`0x4000_0000`) to activate hardware VFP/NEON floating-point engine.
+4. Banked Core Mode Stacks (`0x80a060b4`): Sets up separate stack pointers across all CPU execution modes (FIQ `0xd1`, IRQ `0xd2`, ABT `0xdb`, UND `0xd7`, SYS `0xdf`, SVC `0xd3`).
+5. Scatterloader: Branches to ARM C runtime `__scatterload` (`0x814c029c`), zeroing `.bss` and copying data sections into DRAM, then hands off to `__rt_entry` (`0x814eb0d4`) and `main()` (`0x80a140e0`).
+6. Multitasking RTOS Scheduler: Enters ThreadX / SCI scheduler loop (`0x80a0e128` -> `0x80a0e144`) with CPSR `0x13`, managing static task tables (`T_CM`, `T_DIAG`, `T_KPDSVR`, `T_AUDIO`, `T_P_APP`).
+
+---
+
+## 7. Peripheral MMIO & Display Integration
+
+- **LCD Controller (`0x2080_0000`):**
+  - Control register (`0x2080_0000`) bit 3 = Start Refresh.
+  - Framebuffer pointer register (`0x2080_0024`): physical address = `y_base << 2`.
+  - When refresh is triggered, frame buffer data is blitted into the emulator's virtual GC9307 display and bit 0 of `0x2080_011C` (`refresh done`) is set.
+- **Bare-Metal Payloads Verified:**
+  - `baremetal_lcd.bin`: 13.2M instructions at 6.59 MIPS, live 240x320 framebuffer refresh confirmed.
+  - `baremetal_asm.bin`: 18M instructions at 9.02 MIPS, verified all 5 mailbox markers at `0x80700100` (`0x14802660`, `0xCAFEBABE`, `0xDEADBEEF`, loop counter `1048575`, status `1`).

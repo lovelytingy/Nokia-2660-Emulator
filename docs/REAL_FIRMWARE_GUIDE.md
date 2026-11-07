@@ -24,10 +24,11 @@ TA-1480_10.00.17.01_pac.zip -> contains firmware.pac
 
 Inside the `.PAC` archive, the vendor stores all hardware partition images and partition metadata:
 * `FDL1`: First DownLoader (staged into SRAM at `0x00006200`; sets up clock trees and DRAM controller).
-* `FDL2`: Second DownLoader (staged into High DRAM at `0x80100000`; handles flash writing).
-* `BOOT0` / `SPL`: Primary bootloader with 32-byte `SPRD`/`BIMG` header (staged into SPI NAND Block 0).
-* `BOOT` / `KERNEL`: MOCOR RTOS operating system kernel (staged into High DRAM at `0x80000000`).
-* `SYSTEM` / `ROOTFS`: System assets, icons, fonts, and application binaries (stored in SPI NAND flash).
+* `FDL2`: Second DownLoader (staged into High DRAM at `0x80100000` / `0x80020000`; handles flash writing).
+* `BOOT0` / `SPL`: Primary bootloader with DHTB/SPRD header (staged into SPI NAND Block 0 & SRAM at `0x00006200`, entry `0x00006400`).
+* `BOOT1` / `LK`: Secondary bootloader (staged into High DRAM at `0x80100000`, entry `0x80100200`). Initializes FTL and verifies kernel.
+* `KernelImg` / `BOOT`: MOCOR RTOS operating system kernel (staged into High DRAM at `0x80a05e00`, entry `0x80a06000`).
+* `UserImg` / `SYSTEM`: Userland application framework (`MS_MMI_Main`) staged into User DRAM at `0x88000000` (entry `0x88479F6F`).
 * `PRODNV` / `MISC`: RF calibration, NVRAM, and IMEI parameters.
 * `PARTITION_XML`: Flash partition geometry manifest.
 
@@ -50,33 +51,37 @@ Before running, you can inspect the partition map and header metadata using [`bi
 
 ---
 
-## 4. One-Command Booting with N2660Emu
+## 4. Multi-Stage Booting with N2660Emu
 
-N2660Emu natively ingests downloaded `.PAC` files directly without requiring manual extraction:
+N2660Emu natively ingests downloaded `.PAC` files directly and supports multi-stage boot selection via the `--stage` flag:
 
 ```bash
+# 1. Cold boot from Stage 1 SPL (BOOT0 -> BOOT1 -> Kernel)
+./bin/n2660emu v23_update_Nokia_2660.pac --stage boot0 --timeout 5
+
+# 2. Boot directly into Stage 2 Bootloader (BOOT1 at 0x80100200)
+./bin/n2660emu v23_update_Nokia_2660.pac --stage boot1 --timeout 5
+
+# 3. Boot directly into MOCOR OS Kernel (0x80a06000)
+./bin/n2660emu v23_update_Nokia_2660.pac --stage kernel --timeout 5
+
+# 4. Boot directly into Userland Application Framework (MS_MMI_Main at 0x88479F6F)
+./bin/n2660emu v23_update_Nokia_2660.pac --stage user --timeout 5
+
 # Launch in authentic Nokia 2660 Desktop GUI mode
-./bin/n2660emu Nokia_2660_Flip_TA-1480.pac --gui
-
-# Or pass explicitly via --pac flag
-./bin/n2660emu --pac Nokia_2660_Flip_TA-1480.pac --gui
-
-# Run in headless mode with instruction timeout
-./bin/n2660emu Nokia_2660_Flip_TA-1480.pac --timeout 30
+./bin/n2660emu v23_update_Nokia_2660.pac --gui
 ```
 
 ### Automated Ingestion Pipeline
 When a `.PAC` archive is loaded:
 1. **Header Validation**: Verifies the Spreadtrum `0xFFFAFFFA` magic and decodes product metadata.
-2. **SRAM Staging**: `FDL1` is placed into 64 KB Internal SRAM at `0x00006200`.
-3. **DRAM Staging**: `FDL2` is placed into DRAM at `0x80100000`.
-4. **Bootloader & SPL Staging**:
-   - `BOOT0` is written to SPI NAND Block 0 (first page).
-   - `BOOT0` is mirrored to Direct Flash XIP window (`0x60000000`).
-   - If an SPRD 32-byte header is detected, the payload is staged to `hdr.load_addr` and the entry point is configured.
-5. **Kernel Staging**: `BOOT` / `KERNEL` is staged into DRAM at `0x80000000`.
-6. **Flash Storage Staging**: `SYSTEM` / `ROOTFS` is loaded into the virtual Winbond W25N01GV 128 MB flash storage.
-7. **Entry Point Selection**: The CPU register bank (`SP`, `CPSR`, `PC`, `VFP`) is configured for the bootable partition.
+2. **SRAM Staging**: `FDL1` is placed into Internal SRAM at `0x00006200`.
+3. **BOOT0 Staging**: `BOOT0` is placed into SRAM at `0x00006200` and SPI NAND Block 0 (entry `0x00006400`).
+4. **BOOT1 Staging**: `BOOT1` is placed into DRAM at `0x80100000` (entry `0x80100200`).
+5. **Kernel Staging**: `KernelImg` is placed into DRAM at `0x80a05e00` (reset vector `0x80a06000` -> `0x80a061f0`).
+6. **Userland Staging**: `UserImg` is placed into DRAM at `0x88000000` (entry `0x88479F6F`).
+7. **ThreadX Heap**: Pre-maps `0x7E000000`..`0x80000000` for dynamic RTOS thread stacks.
+8. **Entry Point Selection**: Configured based on the `--stage` parameter or explicit `--entry` override.
 
 ---
 

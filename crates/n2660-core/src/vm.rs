@@ -61,9 +61,24 @@ impl T107Vm {
         uc.mem_map(SRAM_BASE, SRAM_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map SRAM at 0x{:X}: {:?}", SRAM_BASE, e))?;
 
+        // FDL1 Ack stub at 0x00006C22 (Thumb "bx lr" = 0x4770) for bare-metal payload clean return
+        let _ = uc.mem_write(0x0000_6C22, &[0x70, 0x47]);
+
         // 2. Map System High DRAM (48 MB at 0x8000_0000)
         uc.mem_map(DRAM_BASE, DRAM_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map DRAM at 0x{:X}: {:?}", DRAM_BASE, e))?;
+
+        // 2b. Map System Extended DRAM (16 MB at 0x8300_0000 to bring DRAM to full 64 MB)
+        uc.mem_map(DRAM_EXT_BASE, DRAM_EXT_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map Extended DRAM at 0x{:X}: {:?}", DRAM_EXT_BASE, e))?;
+
+        // 2c. Map Userland Application DRAM (32 MB at 0x8800_0000)
+        uc.mem_map(USER_DRAM_BASE, USER_DRAM_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map User DRAM at 0x{:X}: {:?}", USER_DRAM_BASE, e))?;
+
+        // 2d. Map ThreadX Task Stack & Dynamic Heap Window (32 MB at 0x7E00_0000)
+        uc.mem_map(SYS_HEAP_BASE, SYS_HEAP_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map SYS HEAP at 0x{:X}: {:?}", SYS_HEAP_BASE, e))?;
 
         // 3. Map Direct Flash Window (128 MB at 0x6000_0000)
         uc.mem_map(FLASH_DIRECT_BASE, FLASH_DIRECT_SIZE as u64, Prot::ALL)
@@ -103,12 +118,93 @@ impl T107Vm {
         uc.mem_map(SPRD_HW_SFC_BASE, SPRD_HW_SFC_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map HW SFC at 0x{:X}: {:?}", SPRD_HW_SFC_BASE, e))?;
 
+        // 10. Map SPRD Display Controller (8 KB at 0x2080_0000)
+        uc.mem_map(SPRD_LCDC_BASE, SPRD_LCDC_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map LCDC at 0x{:X}: {:?}", SPRD_LCDC_BASE, e))?;
+
+        // 11. Map SPRD AHB Clock & Power (16 KB at 0x20E0_0000)
+        uc.mem_map(SPRD_AHB_BASE, SPRD_AHB_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map AHB at 0x{:X}: {:?}", SPRD_AHB_BASE, e))?;
+
+        // 12. Map SPRD Keypad Matrix (4 KB at 0x4025_0000)
+        uc.mem_map(SPRD_KEYPAD_BASE, SPRD_KEYPAD_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map Keypad at 0x{:X}: {:?}", SPRD_KEYPAD_BASE, e))?;
+
+        // 13. Map SPRD AON Pinmux (8 KB at 0x402A_0000)
+        uc.mem_map(SPRD_AON_PINMUX_BASE, SPRD_AON_PINMUX_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map AON Pinmux at 0x{:X}: {:?}", SPRD_AON_PINMUX_BASE, e))?;
+
+        // 14. Map SPRD Secure Boot & System Control (16 KB at 0x402E_0000)
+        uc.mem_map(SPRD_SECURE_BOOT_BASE, SPRD_SECURE_BOOT_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map Secure Boot at 0x{:X}: {:?}", SPRD_SECURE_BOOT_BASE, e))?;
+
+        // 15. Map SPRD PMIC ADI Base (8 KB at 0x4060_0000)
+        uc.mem_map(SPRD_PMIC_ADI_BASE, SPRD_PMIC_ADI_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map PMIC ADI Base at 0x{:X}: {:?}", SPRD_PMIC_ADI_BASE, e))?;
+
+        // 16. Map SPRD PMIC EIC & APB (16 KB at 0x4060_8000)
+        uc.mem_map(SPRD_PMIC_EIC_BASE, SPRD_PMIC_EIC_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map PMIC EIC at 0x{:X}: {:?}", SPRD_PMIC_EIC_BASE, e))?;
+
+        // 17. Map SPRD APB Clock Gates (4 KB at 0x7130_0000)
+        uc.mem_map(SPRD_APB_CLK_BASE, SPRD_APB_CLK_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map APB Clock at 0x{:X}: {:?}", SPRD_APB_CLK_BASE, e))?;
+
+        // 18. Map SPRD ADI Controller (8 KB at 0xA160_0000)
+        uc.mem_map(SPRD_ADI_CTRL_BASE, SPRD_ADI_CTRL_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map ADI Controller at 0x{:X}: {:?}", SPRD_ADI_CTRL_BASE, e))?;
+
+        // 19. Map SPRD Analog Die Window (8 KB at 0xA161_0000)
+        uc.mem_map(SPRD_ADI_ANALOG_BASE, SPRD_ADI_ANALOG_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map ADI Analog Window at 0x{:X}: {:?}", SPRD_ADI_ANALOG_BASE, e))?;
+
         // Setup Instruction Hook & IRQ Dispatcher
         uc.add_code_hook(0, 0xFFFF_FFFF, |uc, addr, _size| {
-            let ctx = uc.get_data_mut();
-            ctx.instruction_count += 1;
-            if ctx.trace {
-                println!("[TRACE] PC = 0x{:08X} (insn #{})", addr, ctx.instruction_count);
+            let trace_on = {
+                let ctx = uc.get_data_mut();
+                ctx.instruction_count += 1;
+                ctx.trace
+            };
+
+            // BOOT1 handoff & FTL interception:
+            // 0x801136E0: SCI_FTL_Load(dev_id)
+            // 0x80100C24: load_kernel()
+            // 0x80113CA4: SCI_FTL_Unload(dev_id)
+            if addr == 0x8011_36E0 {
+                let _ = uc.mem_write(0x8057_1AF0, &2u32.to_le_bytes()); // device state = 2 (LOADED)
+                let _ = uc.mem_write(0x8057_1B00, &2048u32.to_le_bytes()); // sector size
+                let _ = uc.mem_write(0x8057_1B04, &64u32.to_le_bytes()); // erase unit
+                let _ = uc.mem_write(0x8057_1B08, &1024u32.to_le_bytes()); // total sectors
+                let _ = uc.mem_write(0x8057_1B0C, &1u32.to_le_bytes()); // attrib
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::R0, 0); // r0 = 0 (success)
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            } else if addr == 0x8010_0C24 {
+                println!("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::R0, 1); // r0 = 1 (success)
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            } else if addr == 0x8011_3CA4 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::R0, 0); // r0 = 0 (success)
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if trace_on {
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let sp = uc.reg_read(RegisterARM::SP).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                println!("[TRACE] PC = 0x{:08X} | CPSR: 0x{:08X} | SP: 0x{:08X} | R0: 0x{:08X} | LR: 0x{:08X}", addr, cpsr, sp, r0, lr);
             }
 
             // Check for pending unmasked IRQ to dispatch to CPU exception vector
@@ -375,6 +471,179 @@ impl T107Vm {
             },
         ).map_err(|e| format!("Failed to add HW SFC read hook: {:?}", e))?;
 
+        // Setup SPRD LCD Controller Hooks (0x2080_0000..0x2080_2000)
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            SPRD_LCDC_BASE,
+            SPRD_LCDC_BASE + SPRD_LCDC_SIZE as u64,
+            |uc, _mem_type, addr, _size, value| {
+                let offset = (addr - SPRD_LCDC_BASE) as u32;
+                let val = (value as u64 & 0xFFFF_FFFF) as u32;
+                if offset == 0x0000 {
+                    // Control register: bit 3 = Start Refresh
+                    if (val & 0x08) != 0 {
+                        let mut y_base_bytes = [0u8; 4];
+                        if uc.mem_read(SPRD_LCDC_BASE + 0x24, &mut y_base_bytes).is_ok() {
+                            let y_base = u32::from_le_bytes(y_base_bytes);
+                            let fb_addr = (y_base as u64) << 2;
+                            if fb_addr >= DRAM_BASE {
+                                let mut fb_data = vec![0u8; GC9307_WIDTH * GC9307_HEIGHT * 2];
+                                if uc.mem_read(fb_addr, &mut fb_data).is_ok() {
+                                    let ctx = uc.get_data_mut();
+                                    for y in 0..GC9307_HEIGHT {
+                                        for x in 0..GC9307_WIDTH {
+                                            let idx = (y * GC9307_WIDTH + x) * 2;
+                                            let pixel = u16::from_le_bytes([fb_data[idx], fb_data[idx + 1]]);
+                                            ctx.display.gc9307.framebuffer[y][x] = pixel;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Set Refresh Done status (bit 0 = 1) at 0x2080_011C
+                        let _ = uc.mem_write(SPRD_LCDC_BASE + 0x011C, &1u32.to_le_bytes());
+                    }
+                } else if offset == 0x0114 {
+                    // IRQ clear: clear status bit 0
+                    let _ = uc.mem_write(SPRD_LCDC_BASE + 0x011C, &0u32.to_le_bytes());
+                }
+                true
+            },
+        ).map_err(|e| format!("Failed to add LCDC write hook: {:?}", e))?;
+
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_LCDC_BASE,
+            SPRD_LCDC_BASE + SPRD_LCDC_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_LCDC_BASE) as u32;
+                let val: u32 = match offset {
+                    0x011C => 1, // Refresh Done
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add LCDC read hook: {:?}", e))?;
+
+        // Setup SPRD AON Pinmux & Boot Key Read Hook (0x402A_0000..0x402A_2000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_AON_PINMUX_BASE,
+            SPRD_AON_PINMUX_BASE + SPRD_AON_PINMUX_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_AON_PINMUX_BASE) as u32;
+                let val: u32 = match offset {
+                    0x0018 => 0, // Normal boot mode (no hardware test strap)
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add Pinmux read hook: {:?}", e))?;
+
+        // Setup SPRD Secure Boot & Chip ID Read Hook (0x402E_0000..0x402E_4000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_SECURE_BOOT_BASE,
+            SPRD_SECURE_BOOT_BASE + SPRD_SECURE_BOOT_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_SECURE_BOOT_BASE) as u32;
+                let val: u32 = match offset {
+                    0x00FC => 0x9117_0000, // UMS9117 Chip ID
+                    0x0568 => 0x0000_0003, // Security Gates 1 & 2 active
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add Secure Boot read hook: {:?}", e))?;
+
+        // Setup SPRD ADI Controller Hooks (0xA160_0000..0xA160_2000)
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            SPRD_ADI_CTRL_BASE,
+            SPRD_ADI_CTRL_BASE + SPRD_ADI_CTRL_SIZE as u64,
+            |uc, _mem_type, addr, _size, value| {
+                let offset = (addr - SPRD_ADI_CTRL_BASE) as u32;
+                let val = (value as u64 & 0xFFFF_FFFF) as u32;
+                if offset == 0x0238 {
+                    // ADI Read Command: prepare matching response at 0xA160023C
+                    let tag = (val & 0x1FFFF) >> 2;
+                    let resp = tag << 16; // bit 31=0 (not busy), mock_val=0
+                    let _ = uc.mem_write(SPRD_ADI_CTRL_BASE + 0x023C, &resp.to_le_bytes());
+                }
+                true
+            },
+        ).map_err(|e| format!("Failed to add ADI write hook: {:?}", e))?;
+
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_ADI_CTRL_BASE,
+            SPRD_ADI_CTRL_BASE + SPRD_ADI_CTRL_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_ADI_CTRL_BASE) as u32;
+                let val: u32 = match offset {
+                    0x0240 => 0, // Write FIFO ready
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add ADI read hook: {:?}", e))?;
+
+        // Setup SPRD PMIC EIC & Power Key Read Hook (0x4060_8000..0x4060_C000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_PMIC_EIC_BASE,
+            SPRD_PMIC_EIC_BASE + SPRD_PMIC_EIC_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_PMIC_EIC_BASE) as u32;
+                let val: u32 = match offset {
+                    0x0280 => 2, // Power key not pressed (bit 1 = 1)
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add PMIC EIC read hook: {:?}", e))?;
+
+        // Setup SPRD PMIC ADI Write Hook (Torch & Haptics) (0x4060_0000..0x4060_2000)
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            SPRD_PMIC_ADI_BASE,
+            SPRD_PMIC_ADI_BASE + SPRD_PMIC_ADI_SIZE as u64,
+            |uc, _mem_type, addr, _size, _value| {
+                let offset = (addr - SPRD_PMIC_ADI_BASE) as u32;
+                if offset == 0x0028 {
+                    // PMIC ADI Base Command Register -> response at 0x4060002C
+                    let _ = uc.mem_write(SPRD_PMIC_ADI_BASE + 0x002C, &0u32.to_le_bytes());
+                }
+                true
+            },
+        ).map_err(|e| format!("Failed to add PMIC ADI write hook: {:?}", e))?;
+
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_PMIC_ADI_BASE,
+            SPRD_PMIC_ADI_BASE + SPRD_PMIC_ADI_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_PMIC_ADI_BASE) as u32;
+                let val: u32 = match offset {
+                    0x0030 => 0, // Write FIFO ready
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add PMIC ADI read hook: {:?}", e))?;
+
         // Setup Unmapped Trap Read/Write Hook for 0x4000_0000 range
         uc.add_mem_hook(
             HookType::MEM_READ_UNMAPPED | HookType::MEM_WRITE_UNMAPPED,
@@ -441,14 +710,23 @@ impl T107Vm {
         };
         self.uc.reg_write(RegisterARM::SP, sp)
             .map_err(|e| format!("Failed to write SP: {:?}", e))?;
-        // ARM Supervisor (SVC) mode, IRQ/FIQ masked: 0x600000D3
-        self.uc.reg_write(RegisterARM::CPSR, 0x6000_00D3)
+        
+        let is_thumb = (entry_point & 1) != 0;
+        let mut cpsr = 0x6000_00D3; // ARM Supervisor (SVC) mode, IRQ/FIQ masked
+        if is_thumb {
+            cpsr |= 0x20;
+        }
+        self.uc.reg_write(RegisterARM::CPSR, cpsr)
             .map_err(|e| format!("Failed to write CPSR: {:?}", e))?;
         // Enable VFP / NEON via CP15 CPACR and FPEXC
         let _ = self.uc.reg_write(RegisterARM::C1_C0_2, 0x00F0_0000);
         let _ = self.uc.reg_write(RegisterARM::FPEXC, 0x4000_0000);
 
-        self.uc.reg_write(RegisterARM::PC, entry_point)
+        // Safe halt loop stub at 0x8070_5FF0 ("b ." = 0xEAFFFFFE)
+        let _ = self.uc.mem_write(0x8070_5FF0, &[0xFE, 0xFF, 0xFF, 0xEA]);
+        let _ = self.uc.reg_write(RegisterARM::LR, 0x8070_5FF0);
+
+        self.uc.reg_write(RegisterARM::PC, entry_point & !1)
             .map_err(|e| format!("Failed to write PC: {:?}", e))?;
         Ok(())
     }
@@ -502,15 +780,19 @@ impl T107Vm {
                 println!("[PAC] Staging BOOT1/LK partition ({} bytes) at 0x80100000", f.data.len());
                 let _ = self.load_bytes(&f.data, 0x8010_0000);
             } else if id_lower.contains("kernel") || id_lower.contains("boot") || id_lower == "kernelimg" {
-                let load_addr = 0x8000_0000u64;
-                println!("[PAC] Staging Kernel/Boot partition '{}' ({} bytes) at 0x{:08X}", f.id, f.data.len(), load_addr);
-                if is_dhtb {
-                    self.load_bytes(&f.data[512..], load_addr)?;
+                let (load_addr, entry) = if f.load_addr == 0x8000_0000 {
+                    (0x8000_0000u64, 0x8000_0000u64)
                 } else {
-                    self.load_bytes(&f.data, load_addr)?;
-                }
-                kernel_entry = Some(load_addr);
-            } else if id_lower.contains("system") || id_lower.contains("rootfs") || id_lower.contains("userimg") || id_lower.contains("mmires") || id_lower.contains("nv") {
+                    (0x80a0_5e00u64, 0x80a0_6000u64)
+                };
+                println!("[PAC] Staging Kernel/Boot partition '{}' ({} bytes) at 0x{:08X}", f.id, f.data.len(), load_addr);
+                self.load_bytes(&f.data, load_addr)?;
+                kernel_entry = Some(entry);
+            } else if id_lower.contains("userimg") || id_lower.contains("user_img") {
+                let load_addr = 0x8800_0000u64;
+                println!("[PAC] Staging UserImg partition '{}' ({} bytes) at 0x{:08X}", f.id, f.data.len(), load_addr);
+                self.load_bytes(&f.data, load_addr)?;
+            } else if id_lower.contains("system") || id_lower.contains("rootfs") || id_lower.contains("mmires") || id_lower.contains("nv") {
                 // Flash storage partitions
                 self.uc.get_data_mut().sfc.load_image(&f.data);
             } else if f.load_addr != 0 && f.load_addr < 0x8000_0000 && (f.load_addr & 0xFFFF_0000) != 0 {

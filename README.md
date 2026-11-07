@@ -77,6 +77,21 @@ make test
 The main emulator CLI [`bin/n2660emu`](bin/n2660emu) provides full control over hardware simulation:
 
 ```bash
+# Cold boot official Nokia PAC firmware (BOOT0 -> BOOT1 -> Kernel)
+./bin/n2660emu --pac v23_update_Nokia_2660.pac --stage boot0 --timeout 10
+
+# Boot directly into MOCOR OS Kernel (0x80a06000)
+./bin/n2660emu --pac v23_update_Nokia_2660.pac --stage kernel --timeout 10
+
+# Boot directly into Userland Application Framework (MS_MMI_Main at 0x88479F6F)
+./bin/n2660emu --pac v23_update_Nokia_2660.pac --stage user --timeout 10
+
+# Test bare-metal LCD payload with live 240x320 framebuffer updates
+./bin/n2660emu path/to/baremetal_lcd.bin --timeout 5
+
+# Test bare-metal ASM payload with mailbox diagnostics (0x80700100)
+./bin/n2660emu path/to/baremetal_asm.bin --timeout 5
+
 # Launch Desktop GUI with built-in interactive Nokia 2660 Flip OS demo
 ./bin/n2660emu --gui
 
@@ -88,9 +103,6 @@ The main emulator CLI [`bin/n2660emu`](bin/n2660emu) provides full control over 
 
 # Boot ARM Linux / MOCOR OS kernel with ATAGS handoff
 ./bin/n2660emu zImage --entry 0x80008000 --atags --cmdline "console=ttyS0,115200 root=/dev/mtdblock3 ro mem=48M"
-
-# Cold boot with BOOT0 image in SPI NAND Block 0
-./bin/n2660emu --boot0 boot0.bin
 ```
 
 ### Standalone Utilities ([`tools/`](tools/))
@@ -152,7 +164,7 @@ Nokia-2660-Emulator/
 - [x] **Phase 3: Nokia Peripherals** (GC9307 QVGA, ST7735 outer LCD, Keypad matrix, Hall flip sensor, SFC 128 MB SPI NAND, Audio DAC & Buzzer)
 - [x] **Phase 4: BootROM, BSL, PAC Tools, ATAGS & INTC** (Reset vector, BSL framing & CRC16, PAC tools, ARM ATAGS handoff, 32-line INTC & IRQ vectors)
 - [x] **Phase 5: High-Performance Rust Emulation Core & Native Host GUI** (100% Rust workspace, zero-cost FFI, 16+ MIPS, native Desktop GUI with phone skin)
-- [ ] **Phase 6: MOCOR OS Bringup & Vendor Firmware Execution** (FDL1 DDR init, FDL2 flash ops, BOOT1/LK, MOCOR OS)
+- [x] **Phase 6: MOCOR OS Bringup & Vendor Firmware Execution** (BOOT0 -> BOOT1 -> MOCOR OS Kernel execution, FTL & LK handoff, LCDC QVGA refresh, bare-metal payload verification)
 - [ ] **Phase 7: OpenFeatureOS Development** (Custom open-source kernel bringup and verification)
 
 ---

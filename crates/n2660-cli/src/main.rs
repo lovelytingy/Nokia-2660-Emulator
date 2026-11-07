@@ -37,6 +37,10 @@ struct Args {
     #[arg(long, default_value = "0x80000000", value_parser = parse_hex_or_dec)]
     entry: u64,
 
+    /// Load address for raw binary (defaults to --entry or 0x80100000 for DHTB images)
+    #[arg(long = "load-addr", value_parser = parse_hex_or_dec)]
+    load_addr: Option<u64>,
+
     /// Launch native desktop host GUI with Nokia 2660 Flip physical skin
     #[arg(long)]
     gui: bool,
@@ -124,6 +128,10 @@ struct Args {
     /// Kernel command line string passed via ATAG_CMDLINE
     #[arg(long)]
     cmdline: Option<String>,
+
+    /// Execution stage when running PAC firmware: boot0 (default), boot1, kernel, or user
+    #[arg(long, default_value = "boot0")]
+    stage: String,
 }
 
 fn main() {
@@ -183,6 +191,35 @@ fn main() {
         }
     }
 
+    // Apply --stage entry override when booting from PAC
+    if pac_boot_entry.is_some() {
+        if args.entry != 0x8000_0000 {
+            println!("[ENTRY] Using explicit entry address: 0x{:08X}", args.entry);
+            pac_boot_entry = Some(args.entry);
+        } else {
+            match args.stage.to_lowercase().as_str() {
+                "boot0" => {
+                    println!("[STAGE] Cold Boot Stage: BOOT0 SPL (0x00006400)");
+                }
+                "boot1" => {
+                    println!("[STAGE] Selected Stage: BOOT1 Secondary Bootloader (0x80100200)");
+                    pac_boot_entry = Some(0x8010_0200);
+                }
+                "kernel" => {
+                    println!("[STAGE] Selected Stage: MOCOR OS Kernel (0x80a06000)");
+                    pac_boot_entry = Some(0x80a0_6000);
+                }
+                "user" => {
+                    println!("[STAGE] Selected Stage: Userland Application Framework MS_MMI_Main (0x88479F6F)");
+                    pac_boot_entry = Some(0x8847_9F6F);
+                }
+                other => {
+                    eprintln!("[STAGE] Warning: Unknown stage '{}'. Valid stages: boot0, boot1, kernel, user", other);
+                }
+            }
+        }
+    }
+
     // Load BOOT0 into SPI NAND Block 0 if provided
     if let Some(boot0_path) = &args.boot0 {
         if let Ok(data) = std::fs::read(boot0_path) {
@@ -235,9 +272,21 @@ fn main() {
         let _ = vm.set_entry_point(entry);
     } else if let Some(fw_path) = &firmware_target {
         if let Ok(data) = std::fs::read(fw_path) {
-            println!("[VM] Loading binary '{:?}' ({} bytes) to address 0x{:08X}...", fw_path, data.len(), args.entry);
-            let _ = vm.load_bytes(&data, args.entry);
-            let _ = vm.set_entry_point(args.entry);
+            let is_dhtb = data.len() >= 4 && &data[0..4] == b"DHTB";
+            let (load_addr, entry) = if let Some(la) = args.load_addr {
+                (la, args.entry)
+            } else if is_dhtb {
+                if args.entry == 0x8000_0000 || args.entry == 0x8010_0200 {
+                    (0x8010_0000u64, 0x8010_0200u64)
+                } else {
+                    (args.entry.saturating_sub(0x200), args.entry)
+                }
+            } else {
+                (args.entry, args.entry)
+            };
+            println!("[VM] Loading binary '{:?}' ({} bytes) to address 0x{:08X} (entry: 0x{:08X})...", fw_path, data.len(), load_addr, entry);
+            let _ = vm.load_bytes(&data, load_addr);
+            let _ = vm.set_entry_point(entry);
         } else {
             eprintln!("[N2660Emu] Error: Failed to open firmware binary '{:?}'", fw_path);
             process::exit(1);
