@@ -78,4 +78,16 @@ impl SprdUart {
             self.rx_fifo.push_back(b);
         }
     }
+
+    pub fn push_log_str(&mut self, s: &str) {
+        for b in s.bytes() {
+            self.tx_buffer.push(b);
+        }
+        self.tx_buffer.push(b'\n');
+        if self.print_stdout {
+            let _ = io::stdout().write_all(s.as_bytes());
+            let _ = io::stdout().write_all(b"\n");
+            let _ = io::stdout().flush();
+        }
+    }
 }

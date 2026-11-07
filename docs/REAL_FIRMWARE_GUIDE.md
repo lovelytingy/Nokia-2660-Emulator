@@ -110,6 +110,8 @@ Real Unisoc T107 firmware expects specific hardware responses during initializat
 | **System Timer** | Down-counting hardware timer with reload at `0x50030000`. | OS task scheduling, delays, and system clock ticks. |
 | **ADI / PMIC** | Battery voltage reporter (3900 mV / ~85%) at `0x500D0000`. | Prevents firmware emergency battery-cutoff shutdown. |
 | **Clock Controller** | Returns clock enable status (`0xFFFFFFFF`) at `0x500E0000`. | Passes peripheral clock gating verification checks. |
+| **Unisoc Modem APB** | 16 MB window mapped at `0xE000_0000` with GPTA timer at `0xE002_0000`. | Supplies 3.84 MHz WCDMA chip clock frames to cellular stack. |
+| **Modem Shared Memory** | 16 MB IPC window at `0xD100_0000` (`0xD1000000`..`0xD1FFFFFF`). | AP $\leftrightarrow$ CP IPC queues, `sbuf` ring buffers, and FDL mailbox. |
 | **Unmapped MMIO Trap** | Traps accesses across `0x50000000..0x50100000` and `0x40000000`. | Returns default 0/written values with single-address warning logging. |
 
 ---

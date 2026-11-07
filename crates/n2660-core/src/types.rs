@@ -94,6 +94,15 @@ pub const SPRD_ADI_CTRL_SIZE: usize = 0x0000_2000; // 8 KB ADI Controller
 pub const SPRD_ADI_ANALOG_BASE: u64 = 0xA161_0000;
 pub const SPRD_ADI_ANALOG_SIZE: usize = 0x0000_2000; // 8 KB Analog Die Window
 
+pub const SPRD_MODEM_PERIPH_BASE: u64 = 0xE000_0000;
+pub const SPRD_MODEM_PERIPH_SIZE: usize = 16 * 1024 * 1024; // 16 MB Unisoc Modem APB Window (GPTA, RF, CoreSight)
+
+pub const SPRD_MODEM_SHMEM_BASE: u64 = 0xD100_0000;
+pub const SPRD_MODEM_SHMEM_SIZE: usize = 16 * 1024 * 1024; // 16 MB Unisoc Modem / DSP Shared Memory & Mailbox
+
+pub const SPRD_MODEM_GPTA_BASE: u64 = 0xE002_0000;
+pub const SPRD_MODEM_GPTA_SIZE: usize = 0x1000; // 4 KB Modem GPTA / Free Running Counter (FRC)
+
 // Peripheral MMIO Offsets
 pub const SPRD_UART0_BASE: u32 = 0x5000_0000;
 pub const SPRD_UART1_BASE: u32 = 0x5001_0000;

@@ -90,7 +90,11 @@ flowchart TD
 
 ### Milestone 8 — Interactive Device
 - [x] Original MOCOR operating system boots cleanly to userland application framework (`MS_MMI_Main` at `0x884A838A` via MMU L1 page table mapping `0x88000000..0x8A000000`).
+- [x] Stream real-time MOCOR 20A RTOS diagnostic logs into interactive UART console via `SCI_TraceLow` formatting (`SprdUart::push_log_str`), eliminating console freeze at `run kernel:20eed`.
 - [x] Render vendor UI assets (QVGA main & QQVGA cover boot splash logos) directly from extracted `MMIRes` (`mmi_res_240X320_MH.bin`) via Spreadtrum RLE16 decoder.
+- [x] Map Unisoc Modem APB peripherals window (`0xE000_0000`), Modem GPTA / Free Running Counter (`0xE002_0000`), and Modem/DSP shared memory window (`0xD100_0000`).
+- [x] Automate MMI homescreen transition and dual display flip transfer (`transfer_main_to_sub`) upon reaching Userland application stage (`BootStage::User`).
+- [x] Interactive T9 dialpad buffer and in-call states on phone keypad click and keyboard events.
 - [x] Native Desktop Host GUI faithfully replicating the physical Nokia 2660 Flip (TA-1480) Matte Black hardware appearance:
   - Pill-rounded chassis corners with dual bevel shading.
   - Glossy obsidian black glass outer cover with camera pill module, dual-tone LED flash, and authentic silver Nokia corporate logotype wordmark.

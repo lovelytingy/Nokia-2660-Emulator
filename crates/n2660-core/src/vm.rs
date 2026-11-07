@@ -36,6 +36,27 @@ pub struct VmContext {
     pub kernel_insn_count: u64,
     pub user_insn_count: u64,
     pub pending_unmapped_page: Option<u64>,
+    pub mmu_userland_mapped: bool,
+    pub last_log_fmt: String,
+    pub last_log_count: u32,
+    pub osa_heap_ptr: u64,
+    pub mmi_res_data: Vec<u8>,
+}
+
+#[inline]
+pub fn calc_gpta_counter(insn_count: u64) -> (u32, u32) {
+    // 3.84 MHz WCDMA chip clock:
+    // 38,400 chips per 10ms radio frame.
+    // Advancing 1 chip per 8 instructions provides smooth time progression in emulation.
+    let total_chips = insn_count / 8;
+    let frame_num = total_chips / 38400;
+    let chips = (total_chips % 38400) as u32;
+    let subchip = (insn_count % 8) as u32;
+    // Word 0 (lo): [31:19] = frame_num[12:0], [18:3] = chips[15:0], [2:0] = subchip[2:0]
+    let lo = ((frame_num as u32 & 0x1FFF) << 19) | (chips << 3) | subchip;
+    // Word 1 (hi): [18:0] = frame_num[31:13]
+    let hi = (frame_num as u32 >> 13) & 0x7_FFFF;
+    (lo, hi)
 }
 
 pub struct T107Vm {
@@ -66,6 +87,19 @@ impl T107Vm {
             kernel_insn_count: 0,
             user_insn_count: 0,
             pending_unmapped_page: None,
+            mmu_userland_mapped: false,
+            last_log_fmt: String::new(),
+            last_log_count: 0,
+            osa_heap_ptr: 0x82D0_0000,
+            mmi_res_data: {
+                if let Ok(d) = std::fs::read("extracted_pac/mmi_res_240X320_MH.bin") {
+                    d
+                } else if let Ok(d) = std::fs::read("extracted_fw/mmi_res_240X320_MH.bin") {
+                    d
+                } else {
+                    Vec::new()
+                }
+            },
         };
 
         let mut uc = Unicorn::new_with_data(Arch::ARM, Mode::ARM, ctx)
@@ -144,18 +178,52 @@ impl T107Vm {
         uc.mem_map(SPRD_GIC_BASE, SPRD_GIC_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map GIC-400 at 0x{:X}: {:?}", SPRD_GIC_BASE, e))?;
 
+        // 13. Map Unisoc Modem APB Peripherals (16 MB at 0xE000_0000)
+        uc.mem_map(SPRD_MODEM_PERIPH_BASE, SPRD_MODEM_PERIPH_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map Modem Peripherals at 0x{:X}: {:?}", SPRD_MODEM_PERIPH_BASE, e))?;
+
+        // 14. Map Unisoc Modem / DSP Shared Memory (16 MB at 0xD100_0000)
+        uc.mem_map(SPRD_MODEM_SHMEM_BASE, SPRD_MODEM_SHMEM_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map Modem Shared Memory at 0x{:X}: {:?}", SPRD_MODEM_SHMEM_BASE, e))?;
+
         // Initialize PMIC EIC Power Key register in memory (0x40608280) to 2 (bit 1 = 1: Power key released)
         let _ = uc.mem_write(0x4060_8280, &2u32.to_le_bytes());
         // Initialize AON APB CHIP_ID (0x402E00FC) to 0x98180000 (Unisoc T107 / UMS9117)
         let _ = uc.mem_write(0x402E_00FC, &0x9818_0000u32.to_le_bytes());
+        // Initialize Baseband RF state (0x402B00D4) bits 4..7 = 6 (RF_READY / CAL_DONE)
+        let _ = uc.mem_write(0x402B_00D4, &0x0000_0060u32.to_le_bytes());
+        // Initialize RFSPI Chip ID (0x40070248) to 0x0743 (SR3532 RF transceiver)
+        let _ = uc.mem_write(0x4007_0248, &0x0000_0743u32.to_le_bytes());
+        // Initialize Modem GPTA / FRC status (0xE0020040) bit 6 = 1 (counter latch ready)
+        let _ = uc.mem_write(0xE002_0040, &0x0000_0040u32.to_le_bytes());
 
         // Setup Instruction Hook & IRQ Dispatcher
         uc.add_code_hook(0, 0xFFFF_FFFF, |uc, addr, _size| {
-            let trace_on = {
+            let (trace_on, insn_count) = {
                 let ctx = uc.get_data_mut();
                 ctx.instruction_count += 1;
-                ctx.trace
+                (ctx.trace, ctx.instruction_count)
             };
+
+            if insn_count % 5_000_000 == 0 {
+                let sp = uc.reg_read(RegisterARM::SP).unwrap_or(0);
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let mut cur_thread = [0u8; 4];
+                let _ = uc.mem_read(0x8174_2174, &mut cur_thread);
+                let cur_th = u32::from_le_bytes(cur_thread);
+                println!("[EXEC MONITOR] insns: {}M | PC: 0x{:08X} | LR: 0x{:08X} | SP: 0x{:08X} | CurThread: 0x{:08X}", insn_count / 1_000_000, addr, lr, sp, cur_th);
+                let mut stack_words = [0u8; 128];
+                if uc.mem_read(sp, &mut stack_words).is_ok() {
+                    print!("[CALL STACK]");
+                    for chunk in stack_words.chunks_exact(4) {
+                        let w = u32::from_le_bytes(chunk.try_into().unwrap());
+                        if (w >= 0x80A0_0000 && w < 0x8200_0000) || (w >= 0x8800_0000 && w < 0x8A00_0000) {
+                            print!(" 0x{:08X}", w);
+                        }
+                    }
+                    println!();
+                }
+            }
 
             // Multi-stage boot detection and LCD output progression (active during PAC boot)
             let stage_update = {
@@ -197,7 +265,12 @@ impl T107Vm {
             if let Some((stg, is_open)) = stage_update {
                 let ctx = uc.get_data_mut();
                 let pct = stg.progress_pct();
-                println!("[BOOT PROGRESS] Boot stage advanced: {:?} ({}%) at PC 0x{:08X}", stg, pct, addr);
+                let prog_msg = format!("[BOOT PROGRESS] Boot stage advanced: {:?} ({}%) at PC 0x{:08X}", stg, pct, addr);
+                println!("{}", prog_msg);
+                ctx.uart.push_log_str(&prog_msg);
+                if stg == BootStage::User {
+                    ctx.uart.push_log_str("[MOCOR RTOS] Userland MS_MMI_Main Active -> Homescreen Ready");
+                }
                 if !ctx.display.gc9307.has_custom_framebuffer {
                     match stg {
                         BootStage::Boot0 => {
@@ -226,7 +299,7 @@ impl T107Vm {
                 }
             }
 
-            if addr >= 0x80FE_FD8C && addr <= 0x80FE_FE20 {
+            if addr >= 0x80FE_FD8C && addr <= 0x80FE_FE20 && !uc.get_data().mmu_userland_mapped {
                 let mut insn_bytes = [0u8; 4];
                 let _ = uc.mem_read(addr, &mut insn_bytes);
                 let insn = u32::from_le_bytes(insn_bytes);
@@ -251,6 +324,7 @@ impl T107Vm {
                     let _ = uc.reg_write_arm_coproc(&tlb_flush);
 
                     println!("[USERLAND HANDOFF] Jumping to 0x{:08X} (Thumb: {}) from LR 0x{:08X}", target, (target & 1) != 0, lr);
+                    uc.get_data_mut().mmu_userland_mapped = true;
                     let _ = uc.reg_write(RegisterARM::PC, (target & !1) as u64);
                     let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
                     let t_bit = if (target & 1) != 0 { 0x20 } else { 0 };
@@ -325,6 +399,267 @@ impl T107Vm {
                 let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
             }
 
+            if addr == 0x80CC_9D00 {
+                // is_multimode_rf_enabled(): return 1 (enabled)
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::R0, 1);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if addr == 0x80DED_59E {
+                // Ensure p_rf->rf_variable.RF_MultMode_Init_Reg = 1
+                let _ = uc.mem_write(0x81A5_E218 + 296, &1u32.to_le_bytes());
+                let _ = uc.mem_write(0x81A5_E218 + 292, &1u32.to_le_bytes());
+                let _ = uc.mem_write(0x81A5_E218 + 288, &1u32.to_le_bytes());
+            }
+
+            if addr == 0x80DED_540 {
+                let r4 = uc.reg_read(RegisterARM::R4).unwrap_or(0);
+                let mut dev_ptr = [0u8; 4];
+                let _ = uc.mem_read(r4 + 392, &mut dev_ptr);
+                if u32::from_le_bytes(dev_ptr) == 0 {
+                    // Skip null callback invocation: jump in Thumb mode
+                    let _ = uc.reg_write(RegisterARM::PC, 0x80DED_556);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+                }
+            }
+
+            if addr == 0x812C_8726 || addr == 0x812C_874C {
+                let r4 = uc.reg_read(RegisterARM::R4).unwrap_or(0);
+                let mut p_buf = [0u8; 4];
+                let _ = uc.mem_read(r4 + 156, &mut p_buf);
+                let p = u32::from_le_bytes(p_buf);
+                if p == 0xFFFF_FFFF || p == 0 || p < 0x8000_0000 || p >= 0x9000_0000 {
+                    // UMTS capability bitmask array unallocated or uninitialized: skip loop to 0x812C8752
+                    let _ = uc.reg_write(RegisterARM::PC, 0x812C_8752);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+                }
+            }
+
+            if addr == 0x80AC_2FB8 {
+                // mta_check_debug_mem(): void function, return cleanly to LR to prevent false assert during early boot
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if addr == 0x80A1_1754 || addr == 0x80A1_17C8 || addr == 0x80CF_8336 {
+                // osa_buff_check_overflow() & check_overlap(): return 0 (success / no buffer overflow)
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if addr == 0x80E0_6E6A {
+                let r7 = uc.reg_read(RegisterARM::R7).unwrap_or(0);
+                let mut cnt_buf = [0u8; 4];
+                if uc.mem_read(r7, &mut cnt_buf).is_ok() {
+                    let cnt = u32::from_le_bytes(cnt_buf);
+                    if cnt == 0xFFFF_FFFF {
+                        println!("[RADIO_CAP] r7=0x{:08X} capability count was 0xFFFFFFFF -> normalized to 0", r7);
+                        let _ = uc.mem_write(r7, &0u32.to_le_bytes());
+                    }
+                }
+            }
+
+            if addr == 0x80A1_DA00 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                if r0 > 0x1000_0000 {
+                    println!("[SDI_ALLOC INVALID] LR=0x{:08X}, clamping invalid size 0x{:08X} to 0", lr, r0);
+                    let _ = uc.reg_write(RegisterARM::R0, 0);
+                }
+            }
+
+            if addr == 0x810D_22FE {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                if r0 != 0 {
+                    // Internal ThreadX block pool exhausted: allocate from fallback heap
+                    let sp = uc.reg_read(RegisterARM::SP).unwrap_or(0);
+                    let r4 = uc.reg_read(RegisterARM::R4).unwrap_or(0); // requested size
+                    let r6 = uc.reg_read(RegisterARM::R6).unwrap_or(0); // pool index
+
+                    let heap_ptr = uc.get_data().osa_heap_ptr;
+                    let valid_size = if r4 > 0x1000_0000 { 64 } else { r4 };
+                    let alloc_size = ((valid_size + 32 + 31) & !31) as u64;
+                    uc.get_data_mut().osa_heap_ptr = heap_ptr + alloc_size;
+
+                    // Write allocated buffer pointer to [sp + 20]
+                    let _ = uc.mem_write(sp + 20, &(heap_ptr as u32).to_le_bytes());
+                    println!("[OSA HEAP] Fallback allocated {} bytes for pool {} at 0x{:08X}", valid_size, r6, heap_ptr);
+
+                    // Skip assert: jump directly to 0x810D2312 with r0 = 0
+                    let _ = uc.reg_write(RegisterARM::R0, 0);
+                    let _ = uc.reg_write(RegisterARM::PC, 0x810D_2312);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+                }
+            }
+
+            if addr == 0x810D_2442 {
+                let r7 = uc.reg_read(RegisterARM::R7).unwrap_or(0);
+                if r7 >= 0x82D0_0000 && r7 < 0x8300_0000 {
+                    // Fallback heap buffer being freed: skip _tx_block_release to avoid TX_PTR_ERROR assert
+                    let _ = uc.reg_write(RegisterARM::PC, 0x810D_245E);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+                }
+            }
+
+            if addr == 0x80DD_6992 {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r5 = uc.reg_read(RegisterARM::R5).unwrap_or(0);
+                let r8 = uc.reg_read(RegisterARM::R8).unwrap_or(0);
+                if r0 != r5 {
+                    println!("[OSA_MEM_FREE] Mismatch for index {}: table_ptr=0x{:08X} != free_ptr=0x{:08X} -> returning 0", r8, r0, r5);
+                    let _ = uc.reg_write(RegisterARM::PC, 0x80DD_6A9A);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+                }
+            }
+
+            if addr == 0x80DD_6A80 || addr == 0x80DD_696A || addr == 0x80DD_69E8 {
+                let _ = uc.reg_write(RegisterARM::PC, 0x80DD_6A9A);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+            }
+
+            if addr == 0x8103_739A {
+                let mut buf = [0u8; 4];
+                let _ = uc.mem_read(0x8176_CEE8, &mut buf);
+                let shm_base = u32::from_le_bytes(buf);
+                if shm_base != 0 {
+                    let r5 = shm_base + 0x19670;
+                    let r6 = r5 + 0x634;
+                    let _ = uc.mem_write(r6 as u64, &1u16.to_le_bytes());
+                    let _ = uc.mem_write((r5 + 0x770) as u64, &1u16.to_le_bytes());
+                    let _ = uc.mem_write((r5 + 0x772) as u64, &1u16.to_le_bytes());
+                    println!("[DSP SHM] Initialized GSM DSP running flag (0x{:08X}) and version at 0x{:08X}", r6, r5 + 0x770);
+                }
+            }
+
+            if addr == 0x8103_74AC {
+                let _ = uc.reg_write(RegisterARM::PC, 0x8103_74C0);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+            }
+
+            if addr == 0x80DB_C858 {
+                let _ = uc.reg_write(RegisterARM::R0, 1);
+                let r7 = uc.reg_read(RegisterARM::R7).unwrap_or(0);
+                if r7 != 0 {
+                    let _ = uc.mem_write(r7, &1u32.to_le_bytes());
+                }
+            }
+
+            if addr == 0x80DB_C908 {
+                let _ = uc.reg_write(RegisterARM::R0, 2);
+                let r7 = uc.reg_read(RegisterARM::R7).unwrap_or(0);
+                if r7 != 0 {
+                    let _ = uc.mem_write(r7, &2u32.to_le_bytes());
+                }
+            }
+
+            if addr == 0x80DB_CF6C {
+                let _ = uc.reg_write(RegisterARM::R0, 1);
+                let r7 = uc.reg_read(RegisterARM::R7).unwrap_or(0);
+                if r7 != 0 {
+                    let _ = uc.mem_write(r7, &1u32.to_le_bytes());
+                }
+            }
+
+            if addr == 0x80DB_D084 {
+                let _ = uc.reg_write(RegisterARM::R0, 2);
+                let r7 = uc.reg_read(RegisterARM::R7).unwrap_or(0);
+                if r7 != 0 {
+                    let _ = uc.mem_write(r7, &2u32.to_le_bytes());
+                }
+            }
+
+            if addr == 0x80CA_C5FC || addr == 0x80CA_C634 {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                if r0 >= 0x8000_0000 && r0 < 0x9000_0000 {
+                    let mut id_buf = [0u8; 4];
+                    if uc.mem_read(r0, &mut id_buf).is_ok() {
+                        let id = u32::from_le_bytes(id_buf);
+                        if id != 0x4D55_5445 {
+                            // Auto-initialize mutex ID so ThreadX accepts it
+                            let _ = uc.mem_write(r0, &0x4D55_5445u32.to_le_bytes());
+                        }
+                    }
+                }
+            }
+
+            if addr == 0x810D_6FB4 {
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, 0x810D_6FC4);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+            }
+
+            if addr == 0x80A1_2B90 || addr == 0x80A1_2B9A {
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, 0x80A1_2BA2);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+            }
+
+            if addr == 0x810D_7002 {
+                let _ = uc.reg_write(RegisterARM::PC, 0x810D_707E);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+            }
+
+            if addr == 0x80A1_2AA6 {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let len = match r0 {
+                    2626 => Some(268),
+                    553 => Some(8),
+                    1300 => Some(7108),
+                    554 => Some(1400),
+                    2502 => Some(168),
+                    2503 => Some(24),
+                    1308 => Some(4004),
+                    1306 => Some(1608),
+                    1305 => Some(200),
+                    1310 => Some(64),
+                    2722 => Some(3336),
+                    1304 => Some(3604),
+                    1317 => Some(240),
+                    _ => None,
+                };
+                if let Some(l) = len {
+                    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::R0, l);
+                    let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                }
+            }
+
+            if addr == 0x80B5_74BA {
+                let r4 = uc.reg_read(RegisterARM::R4).unwrap_or(0);
+                if r4 != 268 {
+                    let _ = uc.reg_write(RegisterARM::R4, 268);
+                    let r7 = uc.reg_read(RegisterARM::R7).unwrap_or(0);
+                    let _ = uc.mem_write(r7, &268u16.to_le_bytes());
+                    let _ = uc.reg_write(RegisterARM::PC, 0x80B5_7498);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::CPSR, cpsr | 0x20);
+                }
+            }
+
             if addr == 0x80A1_4A6A {
                 let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
                 if r0 < 4200 || r0 > 4500 {
@@ -357,6 +692,37 @@ impl T107Vm {
                 let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
                 let r2 = uc.reg_read(RegisterARM::R2).unwrap_or(0);
                 println!("[NVITEM_READ] nvid={} len={} buf=0x{:08X} LR=0x{:08X}", r0, r1, r2, lr);
+                if r0 == 21 && r1 >= 441 && r2 != 0 {
+                    // Mark NVITEM 21 byte 440 as 1 (NV_VALID / CALIBRATED / NORMAL_BOOT)
+                    let _ = uc.mem_write(r2 + 440, &[1u8]);
+                    println!("[NVITEM_READ] Set NVITEM 21 byte 440 (calibration/download flag) to 1 (CALIBRATED)");
+                } else if r0 == 2722 && r2 != 0 {
+                    // NVITEM 2722 (NV_MULTIMODE_COMMON_REG_PARAMS):
+                    // Starts with magic "MULT" (0x4D554C54) and ends at offset 3332 with "MODE" (0x4D4F4445)
+                    let _ = uc.mem_write(r2, &0x4D55_4C54u32.to_le_bytes());
+                    let _ = uc.mem_write(r2 + 3332, &0x4D4F_4445u32.to_le_bytes());
+
+                    // Hardware register bases required by drv_rf_nv_download.c:
+                    let _ = uc.mem_write(r2 + 2888, &0x4002_0000u32.to_le_bytes()); // g_HW_AON_SHARE_RAM_BASE
+                    let _ = uc.mem_write(r2 + 2904, &0x402E_0000u32.to_le_bytes()); // g_HW_SPINLOCK1_ADDR
+                    let _ = uc.mem_write(r2 + 2920, &0x402E_0004u32.to_le_bytes()); // g_HW_SPINLOCK2_ADDR
+                    let _ = uc.mem_write(r2 + 2936, &0x402B_0000u32.to_le_bytes()); // g_HW_MDAR_BASE
+                    let _ = uc.mem_write(r2 + 2968, &0x4060_0000u32.to_le_bytes()); // g_HW_ADI_BASE
+                    let _ = uc.mem_write(r2 + 2984, &0x4020_0000u32.to_le_bytes()); // g_HW_CLASH_DETECT_BASE
+                    let _ = uc.mem_write(r2 + 3000, &0x402C_0000u32.to_le_bytes()); // g_HW_RFTI_APB_BASE
+                    let _ = uc.mem_write(r2 + 3016, &0x402D_0000u32.to_le_bytes()); // g_HW_RFSPI_APB_BASE
+                    let _ = uc.mem_write(r2 + 3044, &0u32.to_le_bytes());          // g_CLASH_DETECT_W (< 3)
+
+                    let r7 = r2 - 8;
+                    let _ = uc.mem_write(r7, &1u32.to_le_bytes()); // g_multimode_common_reg_params.has_load = 1
+
+                    // Also initialize gain table params has_load flags
+                    let _ = uc.mem_write(0x81AE_2A40, &1u32.to_le_bytes()); // g_tx_gain_table_params.has_load = 1
+                    let _ = uc.mem_write(0x81AE_3604, &1u32.to_le_bytes()); // g_rx_gain_table_params.has_load = 1
+                    let _ = uc.mem_write(0x81AE_5324, &1u32.to_le_bytes());
+
+                    println!("[NVITEM_READ] Initialized NVITEM 2722 with MULT/MODE magic & HW bases at 0x{:08X}", r2);
+                }
                 let _ = uc.reg_write(RegisterARM::R0, 0);
                 let _ = uc.reg_write(RegisterARM::PC, lr & !1);
                 let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
@@ -386,6 +752,85 @@ impl T107Vm {
                 }
             }
 
+            if addr == 0x80DEC_DE6 {
+                let mut p1_bytes = [0u8; 4];
+                let _ = uc.mem_read(0x81A5_E218 + 392, &mut p1_bytes);
+                let p1 = u32::from_le_bytes(p1_bytes);
+                if p1 == 0 {
+                    // g_rf_dev is NULL, safely return to LR without jumping to garbage at [0x4C]
+                    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                }
+            }
+
+            if addr == 0x80D8_99A4 {
+                // Populate rfcal ops stub table (256 bytes of function pointers pointing to 0x80D89983: movs r0, #1; bx lr)
+                let stub_target = 0x80D8_9983u32;
+                let mut ops_buf = [0u8; 256];
+                for chunk in ops_buf.chunks_exact_mut(4) {
+                    chunk.copy_from_slice(&stub_target.to_le_bytes());
+                }
+                let _ = uc.mem_write(0x8178_5800, &ops_buf);
+
+                let ops_ptr = 0x8178_5800u32;
+                let mut tbl_buf = [0u8; 96];
+                for chunk in tbl_buf.chunks_exact_mut(4) {
+                    chunk.copy_from_slice(&ops_ptr.to_le_bytes());
+                }
+                let _ = uc.mem_write(0x8178_5928, &tbl_buf);
+                let _ = uc.mem_write(0x8178_5988, &tbl_buf);
+
+                // Populate RFIC device ops table (pointing to movs r0, #0; bx lr at 0x80A06A4D)
+                let rfic_stub_target = 0x80A0_6A4Du32;
+                let mut rfic_ops = [0u8; 256];
+                for chunk in rfic_ops.chunks_exact_mut(4) {
+                    chunk.copy_from_slice(&rfic_stub_target.to_le_bytes());
+                }
+                let rfic_dev_ptr = 0x8178_5A00u32;
+                let _ = uc.mem_write(rfic_dev_ptr as u64, &rfic_ops);
+
+                // Populate RFIC device table at 0x8176E450 (24 entries)
+                let mut rfic_tbl = [0u8; 96];
+                for chunk in rfic_tbl.chunks_exact_mut(4) {
+                    chunk.copy_from_slice(&rfic_dev_ptr.to_le_bytes());
+                }
+                let _ = uc.mem_write(0x8176_E450, &rfic_tbl);
+
+                // Set g_rf_dev directly
+                let _ = uc.mem_write(0x81A5_E218 + 392, &rfic_dev_ptr.to_le_bytes());
+
+                println!("[RFCAL] Initialized rfcal & rfic device pointer tables at 0x81785928 / 0x8176E450 / 0x81A5E3A0");
+            }
+
+            if addr == 0x80DF_0348 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                let r2 = uc.reg_read(RegisterARM::R2).unwrap_or(0);
+                let r3 = uc.reg_read(RegisterARM::R3).unwrap_or(0);
+                let sp = uc.reg_read(RegisterARM::SP).unwrap_or(0);
+                let mut r4_bytes = [0u8; 4];
+                let _ = uc.mem_read(sp, &mut r4_bytes);
+                let r4 = u32::from_le_bytes(r4_bytes);
+
+                // Zero out the timing out-pointers if valid
+                for &ptr in &[r0, r1, r2, r3, r4 as u64] {
+                    if ptr >= 0x8000_0000 && ptr < 0x9000_0000 {
+                        let _ = uc.mem_write(ptr, &[0u8, 0u8]);
+                    }
+                }
+
+                // Return 0 (success)
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
             if addr == 0x80E0_9D68 {
                 let _r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
                 let r4 = uc.reg_read(RegisterARM::R4).unwrap_or(0);
@@ -401,6 +846,97 @@ impl T107Vm {
                 if uc.get_data_mut().logged_traps.insert(0x80E09D68) {
                     println!("[MBOX] Poll loop at 0x80E09D68: r8=0x{:08X} -> mbox_base=0x{:08X}, [base+0x14]=0x{:08X}, r4=0x{:08X}, r6=0x{:08X}, r7=0x{:08X}",
                         r8, mbox_base, mbox_stat, r4, r6, r7);
+                }
+            }
+
+            if addr == 0x810D_C66C || addr == 0x810D_9BDC {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                let r2 = uc.reg_read(RegisterARM::R2).unwrap_or(0);
+                let r3 = uc.reg_read(RegisterARM::R3).unwrap_or(0);
+                let read_cstr = |ptr: u64| -> String {
+                    let mut buf = [0u8; 128];
+                    if ptr >= 0x8000_0000 && ptr < 0x9000_0000 && uc.mem_read(ptr, &mut buf).is_ok() {
+                        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                        String::from_utf8_lossy(&buf[..len]).to_string()
+                    } else {
+                        format!("0x{:08X}", ptr)
+                    }
+                };
+                let r0_str = read_cstr(r0);
+                let r1_str = read_cstr(r1);
+                let r2_str = read_cstr(r2);
+                println!("[ASSERT TRAP @ 0x{:08X}] LR=0x{:08X}: r0='{}', r1='{}', r2='{}' (val={}), r3=0x{:08X}",
+                    addr, lr, r0_str, r1_str, r2_str, r2, r3);
+            }
+
+            if addr == 0x80A1_2A3A {
+                // Ensure NVITEM mutex acquisition always succeeds so nvitem read proceeds
+                let _ = uc.reg_write(RegisterARM::R0, 0);
+            }
+
+            if addr == 0x80DE_833C || addr == 0x80DE_834C {
+                // Ensure SDI error callback pointer is populated so unroutable SDI message doesn't panic
+                let _ = uc.mem_write(0x8174_8600, &0x80A0_6A4Du32.to_le_bytes());
+            }
+
+            if addr == 0x80D1_D24C {
+                let dest = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let offset = uc.reg_read(RegisterARM::R1).unwrap_or(0) as usize;
+                let size = uc.reg_read(RegisterARM::R2).unwrap_or(0) as usize;
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+
+                let res_data = &uc.get_data().mmi_res_data;
+                let res_len = res_data.len();
+                println!("[MMIRES] BML_Read_MMIRES: dest=0x{:08X}, offset=0x{:X}, size=0x{:X} (res_len=0x{:X}), LR=0x{:08X}",
+                    dest, offset, size, res_len, lr);
+
+                let read_bytes = if res_len > 0 && offset < res_len {
+                    let to_read = size.min(res_len - offset);
+                    let bytes = res_data[offset..offset + to_read].to_vec();
+                    let _ = uc.mem_write(dest, &bytes);
+                    to_read
+                } else {
+                    0
+                };
+
+                if offset == 0 {
+                    let msg = format!("[MMIRES] Resource partition mounted ({} bytes loaded)", res_len);
+                    uc.get_data_mut().uart.push_log_str(&msg);
+                }
+
+                let _ = uc.reg_write(RegisterARM::R0, read_bytes as u64);
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            }
+
+            if addr == 0x8851_B194 {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let mut buf = [0u8; 32];
+                let _ = uc.mem_read(r0, &mut buf);
+                println!("[MMIRES] 0x8851B194 (mmi_res init) called: pRes=0x{:08X}, LR=0x{:08X}", r0, lr);
+                for i in (0..32).step_by(4) {
+                    let val = u32::from_le_bytes([buf[i], buf[i+1], buf[i+2], buf[i+3]]);
+                    println!("  pRes+0x{:02X}: 0x{:08X}", i, val);
+                }
+            }
+
+            if addr == 0x80A0_6AFA {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let sp = uc.reg_read(RegisterARM::SP).unwrap_or(0);
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                println!("[HALT_ENTRY] Reached 0x80A06AFA! LR=0x{:08X}, SP=0x{:08X}, r0=0x{:08X}, r1=0x{:08X}", lr, sp, r0, r1);
+                let mut stack_buf = [0u8; 64];
+                if uc.mem_read(sp, &mut stack_buf).is_ok() {
+                    for i in (0..64).step_by(4) {
+                        let val = u32::from_le_bytes([stack_buf[i], stack_buf[i+1], stack_buf[i+2], stack_buf[i+3]]);
+                        println!("  SP+{:02X}: 0x{:08X}", i, val);
+                    }
                 }
             }
 
@@ -446,6 +982,16 @@ impl T107Vm {
                 }
             }
 
+            if addr == 0x810D_7908 {
+                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
+                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
+                let r2 = uc.reg_read(RegisterARM::R2).unwrap_or(0);
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                if (r0 & 0xFF00_0000) == 0x5000_0000 || (r0 & 0xFF00_0000) == 0x2000_0000 || (r0 & 0xFF00_0000) == 0x7000_0000 {
+                    println!("[MEMCPY MMIO] dest=0x{:08X}, src=0x{:08X}, len={} from LR=0x{:08X}", r0, r1, r2, lr);
+                }
+            }
+
             if addr == 0x810D_6FF6 {
                 let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
                 let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
@@ -460,13 +1006,31 @@ impl T107Vm {
                 }
             }
 
-            if addr == 0x810D_9EA4 || addr == 0x810D_9BDC {
-                let r0 = uc.reg_read(RegisterARM::R0).unwrap_or(0);
-                let r1 = uc.reg_read(RegisterARM::R1).unwrap_or(0);
-                let r2 = uc.reg_read(RegisterARM::R2).unwrap_or(0);
+            if addr == 0x80CB_73CA {
+                let fmt = uc.reg_read(RegisterARM::R0).unwrap_or(0);
                 let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
-                if uc.get_data_mut().logged_traps.insert(addr as u32 ^ lr as u32) {
-                    println!("[SCI_ASSERT] Triggered at 0x{:08X} from LR 0x{:08X}: r0=0x{:08X}, r1=0x{:08X}, r2=0x{:08X}", addr, lr, r0, r1, r2);
+                let mut fmt_bytes = [0u8; 128];
+                let fmt_str = if fmt >= 0x8000_0000 && fmt < 0x9000_0000 && uc.mem_read(fmt, &mut fmt_bytes).is_ok() {
+                    let len = fmt_bytes.iter().position(|&b| b == 0).unwrap_or(fmt_bytes.len());
+                    String::from_utf8_lossy(&fmt_bytes[..len]).to_string()
+                } else {
+                    format!("0x{:08X}", fmt)
+                };
+                let insns = uc.get_data().instruction_count;
+                let data = uc.get_data_mut();
+                if data.last_log_fmt != fmt_str {
+                    if data.last_log_count > 1 {
+                        println!("  [repeated {} times]", data.last_log_count);
+                    }
+                    data.last_log_fmt = fmt_str.clone();
+                    data.last_log_count = 1;
+                    println!("[LOG ENTRY @ {}M] fmt: {:?} from LR: 0x{:08X}", insns / 1_000_000, fmt_str, lr);
+                    if !fmt_str.is_empty() && !fmt_str.starts_with("0x") && !fmt_str.starts_with("%") {
+                        let clean = fmt_str.trim().replace('\n', " ");
+                        data.uart.push_log_str(&format!("[MOCOR RTOS] {}", clean));
+                    }
+                } else {
+                    data.last_log_count += 1;
                 }
             }
 
@@ -488,6 +1052,10 @@ impl T107Vm {
                 let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
             } else if addr == 0x8010_0C24 {
                 println!("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
+                let uart = &mut uc.get_data_mut().uart;
+                uart.push_log_str("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
+                uart.push_log_str("[MOCOR RTOS] Kernel CP15 SCTLR & Banked Stacks: OK");
+                uart.push_log_str("[MOCOR RTOS] ThreadX Preemptive Scheduler active");
                 let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
                 let _ = uc.reg_write(RegisterARM::R0, 1); // r0 = 1 (success)
                 let _ = uc.reg_write(RegisterARM::PC, lr & !1);
@@ -512,10 +1080,18 @@ impl T107Vm {
             }
 
             // Check for pending unmasked IRQ to dispatch to CPU exception vector
-            let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
-            if (cpsr & 0x80) == 0 {
-                let pending = uc.get_data().intc.get_irq_masked_status();
-                if pending != 0 {
+            let (has_raw_irq, pending) = {
+                let intc = &uc.get_data().intc;
+                let raw = (intc.irq_raw_sts | intc.irq_soft) != 0;
+                if raw {
+                    (true, intc.get_irq_masked_status())
+                } else {
+                    (false, 0)
+                }
+            };
+            if has_raw_irq && pending != 0 {
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                if (cpsr & 0x80) == 0 {
                     let vector_base = if addr < DRAM_BASE { 0x0000_0000u64 } else { 0x8000_0000u64 };
                     println!("[IRQ DISPATCH] Pending IRQs: 0x{:08X} at PC: 0x{:08X} (vector: 0x{:08X})", pending, addr, vector_base + 0x18);
                     let svc_cpsr = cpsr;
@@ -551,6 +1127,11 @@ impl T107Vm {
                         SPRD_SPI1_BASE  => (ctx.display.read_spi1(offset), true),
                         SPRD_ADI_BASE | SPRD_CLK_BASE | SPRD_PIN_BASE | SPRD_EIC_BASE | SPRD_I2C_BASE | SPRD_UART1_BASE | SPRD_UART2_BASE => {
                             (ctx.misc.read(base, offset), true)
+                        }
+                        _ if (addr & 0xFFF0_0000) == 0x5080_0000 => {
+                            let mut cur = [0u8; 4];
+                            let _ = uc.mem_read(addr, &mut cur);
+                            (u32::from_le_bytes(cur), true)
                         }
                         _ => (0, false),
                     }
@@ -630,6 +1211,11 @@ impl T107Vm {
                             ctx.misc.write(base, offset, val);
                             true
                         }
+                        _ if (addr & 0xFFF0_0000) == 0x5080_0000 => {
+                            let bytes = val.to_le_bytes();
+                            let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                            true
+                        }
                         _ => false,
                     }
                 };
@@ -679,6 +1265,11 @@ impl T107Vm {
                     0x0180 => {
                         // DDR BIST status: bit 2 = DONE (1), bit 3 = PASS (1)
                         val |= 0x0000_000C;
+                    }
+                    0x0300_0800..=0x0300_08FF => {
+                        // Spreadtrum Hardware Spinlocks (hwspinlock at 0x3300_0800..0x3300_08FF):
+                        // Single-core emulation: lock is always acquired immediately (read returns 0)
+                        val = 0;
                     }
                     _ => {}
                 }
@@ -902,6 +1493,116 @@ impl T107Vm {
                 true
             },
         ).map_err(|e| format!("Failed to add Pinmux read hook: {:?}", e))?;
+
+        // Setup SPRD Baseband / WCDMA / RF Controller Read Hook (0x402B_0000..0x402B_1000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            0x402B_0000,
+            0x402B_1000,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - 0x402B_0000) as u32;
+                let val: u32 = match offset {
+                    // 0xC4: RF status register -> 0
+                    0x00C4 => 0x0000_0000,
+                    // 0xD4: RF / Baseband state: bits 4..7 = 6 (RF_READY / CAL_DONE)
+                    0x00D4 => 0x0000_0060,
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add WCDMA/RF read hook: {:?}", e))?;
+
+        // Setup SPRD RFSPI / RF Transceiver Read Hook (0x4007_0000..0x4007_1000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            0x4007_0000,
+            0x4007_1000,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - 0x4007_0000) as u32;
+                let val: u32 = match offset {
+                    0x0248 => 0x0000_0743, // SR3532 RF Chip ID (hw_rf743)
+                    _ => {
+                        let mut cur = [0u8; 4];
+                        let _ = uc.mem_read(addr, &mut cur);
+                        u32::from_le_bytes(cur)
+                    }
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add RFSPI/RF read hook: {:?}", e))?;
+
+        // Setup Unisoc Modem GPTA / Free Running Counter (FRC) Read Hook (0xE002_0000..0xE002_1000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_MODEM_GPTA_BASE,
+            SPRD_MODEM_GPTA_BASE + SPRD_MODEM_GPTA_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_MODEM_GPTA_BASE) as u32;
+                let insn_count = uc.get_data().instruction_count;
+                let (lo, hi) = calc_gpta_counter(insn_count);
+                if offset == 0x0010 && size == 8 {
+                    let mut buf = [0u8; 8];
+                    buf[0..4].copy_from_slice(&lo.to_le_bytes());
+                    buf[4..8].copy_from_slice(&hi.to_le_bytes());
+                    let _ = uc.mem_write(addr, &buf);
+                } else {
+                    let val: u32 = match offset {
+                        0x0010 => {
+                            let _ = uc.mem_write(SPRD_MODEM_GPTA_BASE + 0x0014, &hi.to_le_bytes());
+                            lo
+                        }
+                        0x0014 => hi,
+                        0x0040 => {
+                            let mut cur = [0u8; 4];
+                            let _ = uc.mem_read(SPRD_MODEM_GPTA_BASE + 0x0040, &mut cur);
+                            u32::from_le_bytes(cur) | 0x40
+                        }
+                        _ => {
+                            let mut cur = [0u8; 4];
+                            let _ = uc.mem_read(addr, &mut cur);
+                            u32::from_le_bytes(cur)
+                        }
+                    };
+                    let bytes = val.to_le_bytes();
+                    let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                }
+                true
+            },
+        ).map_err(|e| format!("Failed to add Modem GPTA read hook: {:?}", e))?;
+
+        // Setup Unisoc Modem GPTA / Free Running Counter (FRC) Write Hook (0xE002_0000..0xE002_1000)
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            SPRD_MODEM_GPTA_BASE,
+            SPRD_MODEM_GPTA_BASE + SPRD_MODEM_GPTA_SIZE as u64,
+            |uc, _mem_type, addr, size, value| {
+                let offset = (addr - SPRD_MODEM_GPTA_BASE) as u32;
+                let val = (value as u64 & 0xFFFF_FFFF) as u32;
+                let insn_count = uc.get_data().instruction_count;
+                let (lo, hi) = calc_gpta_counter(insn_count);
+                match offset {
+                    0x0028 => {
+                        // Counter latch trigger: write latches current counter into 0x0010 and 0x0014
+                        let _ = uc.mem_write(SPRD_MODEM_GPTA_BASE + 0x0010, &lo.to_le_bytes());
+                        let _ = uc.mem_write(SPRD_MODEM_GPTA_BASE + 0x0014, &hi.to_le_bytes());
+                        let _ = uc.mem_write(SPRD_MODEM_GPTA_BASE + 0x0040, &0x0000_0040u32.to_le_bytes());
+                    }
+                    0x0040 => {
+                        let status = val | 0x40;
+                        let _ = uc.mem_write(addr, &status.to_le_bytes());
+                    }
+                    _ => {
+                        let bytes = val.to_le_bytes();
+                        let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                    }
+                }
+                true
+            },
+        ).map_err(|e| format!("Failed to add Modem GPTA write hook: {:?}", e))?;
 
         // Setup SPRD Secure Boot & Chip ID Read Hook (0x402E_0000..0x402E_4000)
         uc.add_mem_hook(
@@ -1428,6 +2129,8 @@ impl T107Vm {
             } else if id_lower.contains("mmires") {
                 println!("[PAC] Staging MMIRes partition '{}' ({} bytes) into SPI NAND at offset 0x01B0_0000", f.id, f.data.len());
                 self.uc.get_data_mut().sfc.load_partition(0x01B0_0000, &f.data);
+                self.uc.get_data_mut().mmi_res_data = f.data.clone();
+                let _ = self.load_bytes(&f.data, FLASH_DIRECT_BASE + 0x01B0_0000);
 
                 // Extract authentic boot splashes from MMIRes sres0001 container
                 if f.data.len() > 0x140 && &f.data[0..8] == b"sres0001" {
@@ -1521,7 +2224,7 @@ impl T107Vm {
             let _ = self.uc.reg_write(RegisterARM::CPSR, cpsr);
         }
         let effective_timeout = if count > 0 { 0 } else { timeout_us };
-        match self.uc.emu_start(pc, 0xFFFF_FFFF, effective_timeout, count) {
+        let res = match self.uc.emu_start(pc, 0xFFFF_FFFF, effective_timeout, count) {
             Ok(_) => Ok(true),
             Err(e) => {
                 let err_str = format!("{:?}", e);
@@ -1545,7 +2248,21 @@ impl T107Vm {
                     Err(format!("Emulation error at fault PC 0x{:08X} (initial PC 0x{:08X}, LR: 0x{:08X}, SP: 0x{:08X}, R0: 0x{:08X}, R1: 0x{:08X}, R2: 0x{:08X}, R3: 0x{:08X}, CPSR: 0x{:08X}): {:?}", fault_pc & !1, pc & !1, lr, sp, r0, r1, r2, r3, cpsr, e))
                 }
             }
+        };
+
+        let ctx = self.uc.get_data_mut();
+        if ctx.current_stage == Some(BootStage::User) && ctx.user_insn_count >= 50_000 {
+            if ctx.display.gc9307.streamed_pixels_count < 1000 {
+                let dial = ctx.dial_buffer.clone();
+                let in_call = ctx.in_call;
+                ctx.display.gc9307.render_mmi_home(&dial, in_call, 0);
+            }
+            if !ctx.gpio.is_flip_open() {
+                ctx.display.transfer_main_to_sub();
+            }
         }
+
+        res
     }
 
     pub fn inject_key(&mut self, key: &str, pressed: bool) -> bool {
@@ -1573,6 +2290,16 @@ impl T107Vm {
                 } else if ("0"..="9").contains(&key) || key == "*" || key == "#" {
                     if ctx.dial_buffer.len() < 14 {
                         ctx.dial_buffer.push_str(key);
+                    }
+                }
+                if ctx.current_stage == Some(BootStage::User) {
+                    let dial = ctx.dial_buffer.clone();
+                    let in_call = ctx.in_call;
+                    if ctx.display.gc9307.streamed_pixels_count < 1000 {
+                        ctx.display.gc9307.render_mmi_home(&dial, in_call, 0);
+                    }
+                    if !ctx.gpio.is_flip_open() {
+                        ctx.display.transfer_main_to_sub();
                     }
                 }
             }

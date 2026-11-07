@@ -771,7 +771,8 @@ pub fn run_desktop_gui(
 
         // 3. Step VM execution
         if !paused || step_requested {
-            let _ = vm.step(100_000, 0);
+            let step_budget = if screenshot_path.is_some() { 500_000 } else { 250_000 };
+            let _ = vm.step(step_budget, 0);
             step_requested = false;
             if !vm.is_flip_open() {
                 vm.transfer_main_to_sub();
@@ -1212,7 +1213,7 @@ pub fn run_desktop_gui(
         window.update_with_buffer(&buf, WIN_WIDTH, WIN_HEIGHT)?;
 
         if let Some(target_path) = screenshot_path {
-            if frame_count >= 80 {
+            if frame_count >= 160 || (vm.get_boot_stage() == Some(n2660_core::types::BootStage::User) && frame_count >= 100) {
                 save_framebuffer_image(&buf, WIN_WIDTH, WIN_HEIGHT, target_path)?;
                 println!("[Desktop GUI] Screenshot ({}x{}) saved to {:?}", WIN_WIDTH, WIN_HEIGHT, target_path);
                 return Ok(());
