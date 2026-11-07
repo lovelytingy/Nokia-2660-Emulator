@@ -169,6 +169,18 @@ fn main() {
             if fw.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("pac")) {
                 return Some(fw.clone());
             }
+            return None; // Explicit binary given, do not auto-detect PAC
+        }
+        // Auto-detect PAC in current working directory or known RE locations
+        let default_pac = PathBuf::from("v23_update_Nokia_2660.pac");
+        if default_pac.exists() {
+            println!("[N2660Emu] Auto-detected Nokia 2660 PAC container: {:?}", default_pac);
+            return Some(default_pac);
+        }
+        let re_pac = PathBuf::from("../Nokia-2660-RE/firmware/v23_update_Nokia_2660.pac");
+        if re_pac.exists() {
+            println!("[N2660Emu] Auto-detected Nokia 2660 PAC container from RE repo: {:?}", re_pac);
+            return Some(re_pac);
         }
         None
     });
@@ -199,19 +211,24 @@ fn main() {
         } else {
             match args.stage.to_lowercase().as_str() {
                 "boot0" => {
-                    println!("[STAGE] Cold Boot Stage: BOOT0 SPL (0x00006400)");
+                    println!("[STAGE] Multi-Stage Order: Starting from Stage 1: BOOT0 SPL (0x00006400)");
+                    pac_boot_entry = Some(0x0000_6400);
+                    vm.set_boot_stage(n2660_core::types::BootStage::Boot0);
                 }
                 "boot1" => {
-                    println!("[STAGE] Selected Stage: BOOT1 Secondary Bootloader (0x80100200)");
+                    println!("[STAGE] Selected Stage: Stage 2: BOOT1 Secondary Bootloader (0x80100200)");
                     pac_boot_entry = Some(0x8010_0200);
+                    vm.set_boot_stage(n2660_core::types::BootStage::Boot1);
                 }
                 "kernel" => {
-                    println!("[STAGE] Selected Stage: MOCOR OS Kernel (0x80a06000)");
+                    println!("[STAGE] Selected Stage: Stage 3: MOCOR OS Kernel (0x80a06000)");
                     pac_boot_entry = Some(0x80a0_6000);
+                    vm.set_boot_stage(n2660_core::types::BootStage::Kernel);
                 }
                 "user" => {
-                    println!("[STAGE] Selected Stage: Userland Application Framework MS_MMI_Main (0x88479F6F)");
+                    println!("[STAGE] Selected Stage: Stage 4: Userland Application Framework MS_MMI_Main (0x88479F6F)");
                     pac_boot_entry = Some(0x8847_9F6F);
+                    vm.set_boot_stage(n2660_core::types::BootStage::User);
                 }
                 other => {
                     eprintln!("[STAGE] Warning: Unknown stage '{}'. Valid stages: boot0, boot1, kernel, user", other);

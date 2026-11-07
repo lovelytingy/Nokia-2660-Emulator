@@ -53,24 +53,30 @@ Before running, you can inspect the partition map and header metadata using [`bi
 
 ## 4. Multi-Stage Booting with N2660Emu
 
-N2660Emu natively ingests downloaded `.PAC` files directly and supports multi-stage boot selection via the `--stage` flag:
+N2660Emu natively ingests downloaded `.PAC` files directly, auto-detects `v23_update_Nokia_2660.pac` in the workspace when no file is specified, and supports multi-stage boot selection via the `--stage` flag:
 
 ```bash
-# 1. Cold boot from Stage 1 SPL (BOOT0 -> BOOT1 -> Kernel)
-./bin/n2660emu v23_update_Nokia_2660.pac --stage boot0 --timeout 5
+# 1. Native Desktop GUI (auto-detects PAC, boots in order, renders live on LCD)
+cargo run -p n2660-cli -- --gui
 
-# 2. Boot directly into Stage 2 Bootloader (BOOT1 at 0x80100200)
-./bin/n2660emu v23_update_Nokia_2660.pac --stage boot1 --timeout 5
+# 2. Cold boot through all stages in order (BOOT0 -> BOOT1 -> Kernel -> MMI)
+cargo run -p n2660-cli -- --stage boot0 --timeout 10
 
-# 3. Boot directly into MOCOR OS Kernel (0x80a06000)
-./bin/n2660emu v23_update_Nokia_2660.pac --stage kernel --timeout 5
+# 3. Boot directly into Stage 2 Bootloader (BOOT1 at 0x80100200)
+cargo run -p n2660-cli -- --stage boot1 --timeout 10
 
-# 4. Boot directly into Userland Application Framework (MS_MMI_Main at 0x88479F6F)
-./bin/n2660emu v23_update_Nokia_2660.pac --stage user --timeout 5
+# 4. Boot directly into MOCOR OS Kernel (0x80a06000)
+cargo run -p n2660-cli -- --stage kernel --timeout 10
 
-# Launch in authentic Nokia 2660 Desktop GUI mode
-./bin/n2660emu v23_update_Nokia_2660.pac --gui
+# 5. Boot directly into Userland Application Framework (MS_MMI_Main at 0x88479F6F)
+cargo run -p n2660-cli -- --stage user --timeout 10
 ```
+
+### Live LCD Display Progression Across Stages:
+* **Stage 1 (`BOOT0` SPL @ `0x00006400`)**: The 240×320 LCD screen illuminates in authentic Nokia Deep Navy Blue (`0x016C`), showing the bold white **NOKIA** wordmark, hardware initialization status, and 25% boot progress.
+* **Stage 2 (`BOOT1` LK @ `0x80100200`)**: The LCD displays Flash Translation Layer (`SCI_FTL`) mount status, DHTB signature verification, and 50% boot progress. The outer 120×160 cover screen shows `Stage 2: Loading OS...`.
+* **Stage 3 (`KernelImg` @ `0x80a06000`)**: The LCD displays MOCOR 20A RTOS bringup (CP15 SCTLR, mode stacks, `__scatterload`, ThreadX scheduler active) and 75% boot progress.
+* **Stage 4 (`UserImg` @ `0x88479F6F`)**: The LCD transitions to the full authentic Nokia 2660 Flip desktop UI with 4G LTE signal bars, battery meter, large digital clock, date, wallpaper, interactive T9 dialpad, and softkeys. Closing the flip dynamically switches the outer 120×160 sub-display to the closed cover clock and battery widget!
 
 ### Automated Ingestion Pipeline
 When a `.PAC` archive is loaded:

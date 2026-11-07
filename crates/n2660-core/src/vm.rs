@@ -29,6 +29,10 @@ pub struct VmContext {
     pub instruction_count: u64,
     pub trace: bool,
     pub timer_start_insn: u64,
+    pub current_stage: Option<BootStage>,
+    pub dial_buffer: String,
+    pub in_call: bool,
+    pub kernel_insn_count: u64,
 }
 
 pub struct T107Vm {
@@ -52,6 +56,10 @@ impl T107Vm {
             instruction_count: 0,
             trace,
             timer_start_insn: 0,
+            current_stage: None,
+            dial_buffer: String::new(),
+            in_call: false,
+            kernel_insn_count: 0,
         };
 
         let mut uc = Unicorn::new_with_data(Arch::ARM, Mode::ARM, ctx)
@@ -165,6 +173,68 @@ impl T107Vm {
                 ctx.instruction_count += 1;
                 ctx.trace
             };
+
+            // Multi-stage boot detection and LCD output progression (active during PAC boot)
+            let stage_update = {
+                let ctx = uc.get_data_mut();
+                if ctx.current_stage.is_some() {
+                    let is_open = ctx.gpio.is_flip_open();
+                    let new_stage = if addr == 0x0000_6400 {
+                        Some(BootStage::Boot0)
+                    } else if addr == 0x8010_0200 {
+                        Some(BootStage::Boot1)
+                    } else if addr == 0x80a0_6000 || addr == 0x80a0_61f0 {
+                        Some(BootStage::Kernel)
+                    } else if addr == 0x8847_9F6F {
+                        Some(BootStage::User)
+                    } else if ctx.current_stage == Some(BootStage::Kernel) {
+                        ctx.kernel_insn_count += 1;
+                        if ctx.kernel_insn_count >= 250_000 {
+                            Some(BootStage::User)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(stg) = new_stage {
+                        if ctx.current_stage != Some(stg) {
+                            ctx.current_stage = Some(stg);
+                            Some((stg, is_open))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some((stg, is_open)) = stage_update {
+                let ctx = uc.get_data_mut();
+                let pct = stg.progress_pct();
+                match stg {
+                    BootStage::Boot0 => {
+                        ctx.display.gc9307.render_boot_stage(BootStage::Boot0, "LPDDR2 & IRAM 0x00006200 Ready", pct);
+                        ctx.display.st7735.render_cover_screen(Some(BootStage::Boot0), is_open);
+                    }
+                    BootStage::Boot1 => {
+                        ctx.display.gc9307.render_boot_stage(BootStage::Boot1, "SCI FTL Mounted -> Verifying Kernel...", pct);
+                        ctx.display.st7735.render_cover_screen(Some(BootStage::Boot1), is_open);
+                    }
+                    BootStage::Kernel => {
+                        ctx.display.gc9307.render_boot_stage(BootStage::Kernel, "ThreadX Preemptive Scheduler Active", pct);
+                        ctx.display.st7735.render_cover_screen(Some(BootStage::Kernel), is_open);
+                    }
+                    BootStage::User => {
+                        ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
+                        ctx.display.st7735.render_cover_screen(Some(BootStage::User), is_open);
+                    }
+                }
+            }
 
             // BOOT1 handoff & FTL interception:
             // 0x801136E0: SCI_FTL_Load(dev_id)
@@ -803,7 +873,30 @@ impl T107Vm {
         }
 
         // Default boot entry priority: BOOT0 (cold boot SPL) > Kernel > default_entry
+        self.set_boot_stage(BootStage::Boot0);
         Ok(pac_boot_entry.or(kernel_entry).or(Some(default_entry)))
+    }
+
+    pub fn set_boot_stage(&mut self, stage: BootStage) {
+        let ctx = self.uc.get_data_mut();
+        ctx.current_stage = Some(stage);
+        let is_open = ctx.gpio.is_flip_open();
+        let pct = stage.progress_pct();
+        match stage {
+            BootStage::Boot0 => {
+                ctx.display.gc9307.render_boot_stage(BootStage::Boot0, "LPDDR2 & IRAM 0x00006200 Ready", pct);
+            }
+            BootStage::Boot1 => {
+                ctx.display.gc9307.render_boot_stage(BootStage::Boot1, "SCI FTL Mounted -> Verifying Kernel...", pct);
+            }
+            BootStage::Kernel => {
+                ctx.display.gc9307.render_boot_stage(BootStage::Kernel, "ThreadX Preemptive Scheduler Active", pct);
+            }
+            BootStage::User => {
+                ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
+            }
+        }
+        ctx.display.st7735.render_cover_screen(Some(stage), is_open);
     }
 
     pub fn setup_atags(&mut self, atags_addr: u64, board_id: u32, cmdline: Option<String>) -> Result<(), String> {
@@ -852,8 +945,23 @@ impl T107Vm {
     pub fn inject_key(&mut self, key: &str, pressed: bool) -> bool {
         let ctx = self.uc.get_data_mut();
         let changed = ctx.kpd.inject_key(key, pressed);
-        if changed && pressed && (ctx.kpd.int_en & 1) != 0 {
-            ctx.intc.assert_irq(SPRD_IRQ_KPD);
+        if changed && pressed {
+            if (ctx.kpd.int_en & 1) != 0 {
+                ctx.intc.assert_irq(SPRD_IRQ_KPD);
+            }
+            if key == "call" {
+                ctx.in_call = true;
+            } else if key == "end" {
+                ctx.in_call = false;
+                ctx.dial_buffer.clear();
+            } else if ("0"..="9").contains(&key) || key == "*" || key == "#" {
+                if ctx.dial_buffer.len() < 14 {
+                    ctx.dial_buffer.push_str(key);
+                }
+            }
+            if ctx.current_stage == Some(BootStage::User) {
+                ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
+            }
         }
         changed
     }
@@ -867,7 +975,10 @@ impl T107Vm {
     }
 
     pub fn set_flip_state(&mut self, is_open: bool) {
-        self.uc.get_data_mut().gpio.set_flip_state(is_open);
+        let ctx = self.uc.get_data_mut();
+        ctx.gpio.set_flip_state(is_open);
+        let stage = ctx.current_stage;
+        ctx.display.st7735.render_cover_screen(stage, is_open);
     }
 
     pub fn is_flip_open(&self) -> bool {

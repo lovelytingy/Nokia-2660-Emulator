@@ -109,3 +109,32 @@ pub const NOKIA_KEYS: &[&str] = &[
     "up", "down", "left", "right", "ok",
     "vol_up", "vol_down", "sos",
 ];
+
+/// Nokia 2660 / MOCOR Multi-Stage Boot Sequence Stages
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootStage {
+    Boot0,
+    Boot1,
+    Kernel,
+    User,
+}
+
+impl BootStage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            BootStage::Boot0 => "BOOT0 (SPL)",
+            BootStage::Boot1 => "BOOT1 (Miniloader)",
+            BootStage::Kernel => "Kernel (MOCOR RTOS)",
+            BootStage::User => "Userland (MS_MMI_Main)",
+        }
+    }
+
+    pub fn progress_pct(&self) -> u32 {
+        match self {
+            BootStage::Boot0 => 25,
+            BootStage::Boot1 => 50,
+            BootStage::Kernel => 75,
+            BootStage::User => 100,
+        }
+    }
+}

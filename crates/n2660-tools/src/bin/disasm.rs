@@ -80,15 +80,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let syms = get_t107_symbols();
 
+    let start_addr = base_addr + offset as u64;
     println!(
-        "Disassembling '{}' at base 0x{:08X} ({} mode):",
+        "Disassembling '{}' at 0x{:08X} (base: 0x{:08X}, offset: 0x{:X}) ({} mode):",
         cli.binary.display(),
+        start_addr,
         base_addr,
+        offset,
         if cli.thumb { "Thumb" } else { "ARM" }
     );
     println!("{:-<72}", "");
 
-    let insns = cs.disasm_all(&code, base_addr).map_err(|e| e.to_string())?;
+    let insns = cs.disasm_all(&code, start_addr).map_err(|e| e.to_string())?;
     for (i, insn) in insns.iter().enumerate() {
         if cli.count > 0 && i >= cli.count {
             break;

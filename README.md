@@ -60,7 +60,9 @@ make
 # Run baremetal hardware verification payload
 make run
 
-# Launch native Desktop GUI with Nokia 2660 physical skin
+# Launch native Desktop GUI with Nokia 2660 physical skin & live PAC multi-stage boot
+cargo run -p n2660-cli -- --gui
+# Or shorthand:
 make gui
 
 # Launch interactive real-time terminal TUI
@@ -77,14 +79,17 @@ make test
 The main emulator CLI [`bin/n2660emu`](bin/n2660emu) provides full control over hardware simulation:
 
 ```bash
-# Cold boot official Nokia PAC firmware (BOOT0 -> BOOT1 -> Kernel)
-./bin/n2660emu --pac v23_update_Nokia_2660.pac --stage boot0 --timeout 10
+# Launch interactive Desktop GUI (auto-detects PAC, boots all stages in order, displays LCD)
+cargo run -p n2660-cli -- --gui
+
+# Cold boot official Nokia PAC firmware through all stages in order (BOOT0 -> BOOT1 -> Kernel -> MMI)
+./bin/n2660emu --stage boot0 --timeout 10
 
 # Boot directly into MOCOR OS Kernel (0x80a06000)
-./bin/n2660emu --pac v23_update_Nokia_2660.pac --stage kernel --timeout 10
+./bin/n2660emu --stage kernel --timeout 10
 
 # Boot directly into Userland Application Framework (MS_MMI_Main at 0x88479F6F)
-./bin/n2660emu --pac v23_update_Nokia_2660.pac --stage user --timeout 10
+./bin/n2660emu --stage user --timeout 10
 
 # Test bare-metal LCD payload with live 240x320 framebuffer updates
 ./bin/n2660emu path/to/baremetal_lcd.bin --timeout 5
