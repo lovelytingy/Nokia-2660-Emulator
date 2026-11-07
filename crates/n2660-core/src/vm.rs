@@ -840,15 +840,30 @@ impl T107Vm {
                             let byte_len = width * height * 2;
                             let mut fb_data = vec![0u8; byte_len];
                             if uc.mem_read(fb_addr, &mut fb_data).is_ok() {
-                                let ctx = uc.get_data_mut();
-                                for y in 0..height {
-                                    for x in 0..width {
-                                        let idx = (y * width + x) * 2;
-                                        let pixel = u16::from_le_bytes([fb_data[idx], fb_data[idx + 1]]);
-                                        ctx.display.gc9307.framebuffer[y][x] = pixel;
+                                let non_zero = fb_data.chunks_exact(2).filter(|c| c[0] != 0 || c[1] != 0).count();
+                                // Only blit if active frame buffer has substantial graphic content (> 1000 non-zero pixels)
+                                if non_zero >= 1000 {
+                                    let ctx = uc.get_data_mut();
+                                    if width == ST7735_WIDTH && height == ST7735_HEIGHT {
+                                        for y in 0..height {
+                                            for x in 0..width {
+                                                let idx = (y * width + x) * 2;
+                                                let pixel = u16::from_le_bytes([fb_data[idx], fb_data[idx + 1]]);
+                                                ctx.display.st7735.framebuffer[y][x] = pixel;
+                                            }
+                                        }
+                                        ctx.display.st7735.has_custom_framebuffer = true;
+                                    } else {
+                                        for y in 0..height.min(GC9307_HEIGHT) {
+                                            for x in 0..width.min(GC9307_WIDTH) {
+                                                let idx = (y * width + x) * 2;
+                                                let pixel = u16::from_le_bytes([fb_data[idx], fb_data[idx + 1]]);
+                                                ctx.display.gc9307.framebuffer[y][x] = pixel;
+                                            }
+                                        }
+                                        ctx.display.gc9307.has_custom_framebuffer = true;
                                     }
                                 }
-                                ctx.display.gc9307.has_custom_framebuffer = true;
                             }
                         }
                         // Set Refresh Done status (bit 0 = 1) at 0x2080_011C
@@ -868,12 +883,9 @@ impl T107Vm {
             SPRD_LCDC_BASE + SPRD_LCDC_SIZE as u64,
             |uc, _mem_type, addr, size, _value| {
                 let offset = (addr - SPRD_LCDC_BASE) as u32;
-                let val: u32 = match offset {
-                    0x011C => 1, // Refresh Done
-                    _ => 0,
-                };
-                let bytes = val.to_le_bytes();
-                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                if offset == 0x011C {
+                    let _ = uc.mem_write(addr, &1u32.to_le_bytes()[..size.min(4)]);
+                }
                 true
             },
         ).map_err(|e| format!("Failed to add LCDC read hook: {:?}", e))?;
@@ -1527,6 +1539,8 @@ impl T107Vm {
                 } else if key == "end" {
                     ctx.in_call = false;
                     ctx.dial_buffer.clear();
+                } else if key == "soft2" || key == "back" {
+                    ctx.dial_buffer.pop();
                 } else if ("0"..="9").contains(&key) || key == "*" || key == "#" {
                     if ctx.dial_buffer.len() < 14 {
                         ctx.dial_buffer.push_str(key);

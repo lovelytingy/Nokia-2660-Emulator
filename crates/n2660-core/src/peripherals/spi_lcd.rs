@@ -129,6 +129,7 @@ pub struct LcdController<const W: usize, const H: usize> {
     pub cur_y: usize,
     pub pixel_byte: Option<u8>,
     pub id_read_idx: usize,
+    pub streamed_pixels_count: usize,
     pub has_custom_framebuffer: bool,
     pub framebuffer: Box<[[u16; W]; H]>,
 }
@@ -153,6 +154,7 @@ impl<const W: usize, const H: usize> LcdController<W, H> {
             cur_y: 0,
             pixel_byte: None,
             id_read_idx: 0,
+            streamed_pixels_count: 0,
             has_custom_framebuffer: false,
             framebuffer: Box::new([[0u16; W]; H]),
         }
@@ -176,7 +178,10 @@ impl<const W: usize, const H: usize> LcdController<W, H> {
                 let pixel = ((hi as u16) << 8) | (val as u16);
                 if self.cur_y < H && self.cur_x < W {
                     self.framebuffer[self.cur_y][self.cur_x] = pixel;
-                    self.has_custom_framebuffer = true;
+                    self.streamed_pixels_count += 1;
+                    if self.streamed_pixels_count >= 1000 {
+                        self.has_custom_framebuffer = true;
+                    }
                 }
                 self.cur_x += 1;
                 if self.cur_x > self.col_end || self.cur_x >= W {
@@ -354,7 +359,9 @@ impl Gc9307Controller {
 
         if !dial_str.is_empty() {
             self.draw_text(20, 190, "DIALPAD:", COLOR_YELLOW, COLOR_DARK_NAVY, 1);
-            self.draw_text(20, 206, dial_str, COLOR_WHITE, COLOR_DARK_NAVY, 3);
+            let dial_scale = if dial_str.len() <= 10 { 3 } else { 2 };
+            let dial_y = if dial_scale == 3 { 206 } else { 210 };
+            self.draw_text(20, dial_y, dial_str, COLOR_WHITE, COLOR_DARK_NAVY, dial_scale);
             if in_call {
                 self.draw_text(20, 238, "[IN CALL] 00:03 - Connected", COLOR_GREEN, COLOR_DARK_NAVY, 1);
             } else {

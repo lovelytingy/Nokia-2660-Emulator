@@ -419,6 +419,8 @@ pub fn run_desktop_gui(vm: &mut T107Vm, start_closed: bool) -> Result<(), Box<dy
 
         let fb_mode = if vm.has_custom_framebuffer() {
             "LCDC DMA / SPI1 Hardware Active"
+        } else if vm.get_boot_stage() == Some(n2660_core::types::BootStage::User) {
+            "Nokia 2660 Flip MMI Home & Dialer"
         } else {
             "Boot Progression & Telemetry"
         };

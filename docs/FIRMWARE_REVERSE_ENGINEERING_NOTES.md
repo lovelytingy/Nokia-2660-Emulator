@@ -175,3 +175,22 @@ In full firmware execution, the kernel configures CP15 `SCTLR` (`0x00C5107F`) wi
 - **LCD Backlight Assertion (`lcd_backlight.c:411`)**: Clamped brightness requests at `0x80CC901C` and `0x80CC9054` to `<= 100`.
 - **AON APB Chip ID (`0x402E00FC`)**: Pre-initialized to `0x98180000` (Unisoc T107 / UMS9117-L), satisfying `init.c:290`.
 - **BML Flash Partition Emulation (`0x811D702C..0x811D7856`)**: Emulated Block Management Layer partition handles and 128 KB block geometry, satisfying `init.c:275`.
+
+---
+
+## 13. Display Subsystem & Authentic Boot Progression Pipeline
+
+### 13.1 LCDC Dummy Probe Hijack Root Cause
+- **Issue Discovered**: During authentic `.pac` boot, when MOCOR RTOS boots the kernel display driver, the LCD screen in the Cocoa GUI became black with faint scanline noise (only 209 non-zero pixels across 240x320).
+- **Underlying Cause**:
+  1. The kernel driver initializes the secondary cover display (128x160) using a 40 KB kernel test buffer at `0x817C07E0`.
+  2. The emulator's LCDC MMIO read hook at `0x2080_0000..0x2080_2000` returned `0` for all register reads other than status `0x011C`. This zeroed out intermediate registers during read-modify-write bitfield operations (`bfi`, `orr`), causing register `0x002C` (`size_xy`) to read `w = 0`.
+  3. The fallback defaulted dimensions to 240x320, overreading 153,600 bytes past the end of the 40 KB buffer and copying 99.7% zeros and 209 garbage bytes into `gc9307.framebuffer`.
+  4. The hook marked `has_custom_framebuffer = true` unconditionally on dummy probes, permanently locking out boot progression updates (`render_boot_stage`) and userland phone UI updates (`render_mmi_home`).
+  5. The SPI1 controller hook likewise marked `has_custom_framebuffer = true` upon receiving just 2 bytes after a `0x2C` command.
+
+### 13.2 Resolution & Verification
+- **Pixel Density Threshold (`non_zero >= 1000`)**: Both LCDC DMA and SPI1 streaming now require substantial graphic content (>1,000 active pixels) before declaring `has_custom_framebuffer = true`. Dummy driver probes and small register writes no longer hijack the display.
+- **Dual Display Dimension Routing**: LCDC DMA frames matching `128x160` route directly to the ST7735 sub-display; `240x320` frames route to the GC9307 main display.
+- **Transparent Register Readback**: Unhandled LCDC MMIO register reads preserve written data rather than zeroing it out, maintaining register state across `bfi` / `str.w` instructions.
+- **Stage & Keypad Sync**: Full progression through Boot0 SPL (25%) -> Boot1 LK (50%) -> MOCOR RTOS Kernel (75%) -> Userland `MS_MMI_Main` (100%) -> Nokia 2660 Flip desktop UI with active T9 dialpad, call state toggling, and backspace digit deletion.
