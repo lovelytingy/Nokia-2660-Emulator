@@ -69,3 +69,58 @@ fn test_baremetal_lcdc_framebuffer_refresh() {
 
     assert!(non_zero_pixels > 1000, "Expected active LCD frame pixels rendered by baremetal_lcd.bin");
 }
+
+#[test]
+fn test_keypad_payload_dram_execution() {
+    let payload_path_1 = Path::new("../../Nokia-2660-RE/tools/ram_payload/bin/keypad_test.bin");
+    let payload_path_2 = Path::new("../Nokia-2660-RE/tools/ram_payload/bin/keypad_test.bin");
+    let payload_path = if payload_path_1.exists() {
+        payload_path_1
+    } else if payload_path_2.exists() {
+        payload_path_2
+    } else {
+        eprintln!("Skipping test: keypad_test.bin not found");
+        return;
+    };
+
+    let data = fs::read(payload_path).expect("Failed to read keypad_test.bin");
+    let mut vm = T107Vm::new(true, false, false).expect("VM create failed");
+
+    // Load payload at DRAM 0x80100000, entry 0x80100200
+    vm.load_bytes(&data, 0x8010_0000).expect("Load failed");
+    vm.set_entry_point(0x8010_0200).expect("Set entry failed");
+
+    // Boot payload and let it initialize USB, heap, pinmap, keymap, and GC9307 LCD
+    let _ = vm.step(2_000_000, 2_000_000);
+
+    // Verify key 5 press injection
+    vm.press_key("5");
+    let _ = vm.step(1_000_000, 1_000_000);
+
+    // Verify key 5 release injection
+    vm.release_key("5");
+    let _ = vm.step(1_000_000, 1_000_000);
+
+    let stdout_bytes = vm.get_usb_stdout();
+    let stdout_str = String::from_utf8_lossy(stdout_bytes);
+
+    assert!(stdout_str.contains("fopen(\"pinmap.bin\")"), "Payload must load pinmap.bin via USB libc server");
+    assert!(stdout_str.contains("fopen(\"keymap.bin\")"), "Payload must load keymap.bin via USB libc server");
+    assert!(stdout_str.contains("GC9307 Controller"), "Payload must identify GC9307 SPI display");
+    assert!(stdout_str.contains("KEY 5"), "Payload must detect key 5 event");
+    assert!(stdout_str.contains("DOWN [PRESSED]"), "Payload must detect DOWN key transition");
+    assert!(stdout_str.contains("UP [RELEASED]"), "Payload must detect UP key transition");
+    assert!(stdout_str.contains("PB: IDLE"), "Dedicated Power/End button must report IDLE");
+
+    // Verify LCD framebuffer has been rendered by draw_keypad_ui
+    let fb = vm.get_gc9307_framebuffer();
+    let mut non_zero_pixels = 0;
+    for row in fb.iter() {
+        for &pixel in row.iter() {
+            if pixel != 0 {
+                non_zero_pixels += 1;
+            }
+        }
+    }
+    assert!(non_zero_pixels > 5000, "Expected GC9307 display frame rendered by keypad_test.bin");
+}

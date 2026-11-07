@@ -25,6 +25,7 @@ pub struct VmContext {
     pub sfc: SprdSfc,
     pub audio: SprdAudio,
     pub misc: SprdMisc,
+    pub usb: SprdUsb,
     pub logged_traps: HashSet<u32>,
     pub instruction_count: u64,
     pub trace: bool,
@@ -52,6 +53,7 @@ impl T107Vm {
             sfc: SprdSfc::new(),
             audio: SprdAudio::new(),
             misc: SprdMisc::new(),
+            usb: SprdUsb::new(print_stdout),
             logged_traps: HashSet::new(),
             instruction_count: 0,
             trace,
@@ -129,6 +131,9 @@ impl T107Vm {
         // 10. Map SPRD Analog Die Window (8 KB at 0xA161_0000)
         uc.mem_map(SPRD_ADI_ANALOG_BASE, SPRD_ADI_ANALOG_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map ADI Analog Window at 0x{:X}: {:?}", SPRD_ADI_ANALOG_BASE, e))?;
+
+        // Initialize PMIC EIC Power Key register in memory (0x40608280) to 2 (bit 1 = 1: Power key released)
+        let _ = uc.mem_write(0x4060_8280, &2u32.to_le_bytes());
 
         // Setup Instruction Hook & IRQ Dispatcher
         uc.add_code_hook(0, 0xFFFF_FFFF, |uc, addr, _size| {
@@ -639,7 +644,16 @@ impl T107Vm {
             |uc, _mem_type, addr, size, _value| {
                 let offset = (addr - SPRD_PMIC_EIC_BASE) as u32;
                 let val: u32 = match offset {
-                    0x0280 => 2, // Power key not pressed (bit 1 = 1)
+                    0x0280 => {
+                        let mut eic_val = 0x0002u32; // bit 1 = 1 (Power idle, active low), bit 9 = 0 (Key 8 idle, active high)
+                        if uc.get_data().kpd.power_button_down {
+                            eic_val &= !(1 << 1);
+                        }
+                        if uc.get_data().kpd.key_status == 0x22 && uc.get_data().kpd.last_key_down {
+                            eic_val |= 1 << 9;
+                        }
+                        eic_val
+                    }
                     _ => 0,
                 };
                 let bytes = val.to_le_bytes();
@@ -648,16 +662,31 @@ impl T107Vm {
             },
         ).map_err(|e| format!("Failed to add PMIC EIC read hook: {:?}", e))?;
 
-        // Setup SPRD PMIC ADI Write Hook (Torch & Haptics) (0x4060_0000..0x4060_2000)
+        // Setup SPRD PMIC ADI Write Hook (Torch, Haptics & ADI Register Access) (0x4060_0000..0x4060_2000)
         uc.add_mem_hook(
             HookType::MEM_WRITE,
             SPRD_PMIC_ADI_BASE,
             SPRD_PMIC_ADI_BASE + SPRD_PMIC_ADI_SIZE as u64,
-            |uc, _mem_type, addr, _size, _value| {
+            |uc, _mem_type, addr, _size, value| {
                 let offset = (addr - SPRD_PMIC_ADI_BASE) as u32;
                 if offset == 0x0028 {
-                    // PMIC ADI Base Command Register -> response at 0x4060002C
-                    let _ = uc.mem_write(SPRD_PMIC_ADI_BASE + 0x002C, &0u32.to_le_bytes());
+                    // PMIC ADI Base Command Register: Payload reads target PMIC register -> response at 0x4060002C
+                    let target_addr = value as u64 & 0xFFFF_FFFF;
+                    let resp = if (target_addr & 0xFFFF) == 0x8280 || (target_addr & 0xFFF) == 0x0280 {
+                        let mut eic_val = 0x0002u32; // bit 1 = 1 (Power idle, active low), bit 9 = 0 (Key 8 idle, active high)
+                        if uc.get_data().kpd.power_button_down {
+                            eic_val &= !(1 << 1);
+                        }
+                        if uc.get_data().kpd.key_status == 0x22 && uc.get_data().kpd.last_key_down {
+                            eic_val |= 1 << 9;
+                        }
+                        eic_val
+                    } else {
+                        let mut resp_bytes = [0u8; 4];
+                        let _ = uc.mem_read(target_addr, &mut resp_bytes);
+                        u32::from_le_bytes(resp_bytes)
+                    };
+                    let _ = uc.mem_write(SPRD_PMIC_ADI_BASE + 0x002C, &resp.to_le_bytes());
                 }
                 true
             },
@@ -669,6 +698,9 @@ impl T107Vm {
             SPRD_PMIC_ADI_BASE + SPRD_PMIC_ADI_SIZE as u64,
             |uc, _mem_type, addr, size, _value| {
                 let offset = (addr - SPRD_PMIC_ADI_BASE) as u32;
+                if offset == 0x002C {
+                    return true;
+                }
                 let val: u32 = match offset {
                     0x0030 => 0, // Write FIFO ready
                     _ => 0,
@@ -678,6 +710,187 @@ impl T107Vm {
                 true
             },
         ).map_err(|e| format!("Failed to add PMIC ADI read hook: {:?}", e))?;
+
+        // Setup Unisoc T107 USB OTG Controller Hooks (0x2020_0000..0x2020_2000)
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            SPRD_USB_BASE,
+            SPRD_USB_BASE + SPRD_USB_SIZE as u64,
+            |uc, _mem_type, addr, _size, value| {
+                let offset = (addr - SPRD_USB_BASE) as u32;
+                let val = (value as u64 & 0xFFFF_FFFF) as u32;
+                uc.get_data_mut().usb.write_reg(addr as u32, val);
+
+                if offset == 0x1c84 && (val & 1) != 0 {
+                    // EP5 TX DMA Trigger: guest requested packet transmission
+                    let tx_tr_ptr = uc.get_data().usb.tx_tr_ptr as u64;
+                    if tx_tr_ptr != 0 {
+                        let mut desc = [0u8; 8];
+                        if uc.mem_read(tx_tr_ptr, &mut desc).is_ok() {
+                            let src_addr = u32::from_le_bytes([desc[0], desc[1], desc[2], desc[3]]) as u64;
+                            let len = u16::from_le_bytes([desc[6], desc[7]]) as usize;
+                            if len > 0 && src_addr != 0 {
+                                let mut tx_buf = vec![0u8; len];
+                                if uc.mem_read(src_addr, &mut tx_buf).is_ok() {
+                                    // Set TX complete flag (bit 18)
+                                    uc.get_data_mut().usb.tx_status |= 1 << 18;
+                                    let tx_st = uc.get_data().usb.tx_status;
+                                    let _ = uc.mem_write(SPRD_USB_BASE + 0x1c88, &tx_st.to_le_bytes());
+
+                                    // Process TX packet through host libc server engine
+                                    let rx_opt = uc.get_data_mut().usb.ingest_tx_data(&tx_buf);
+                                    if let Some(rx_data) = rx_opt {
+                                        // Deliver libc server response to guest EP6 RX DMA buffer
+                                        let rx_tr_ptr = uc.get_data().usb.rx_tr_ptr as u64;
+                                        if rx_tr_ptr != 0 {
+                                            let mut rx_desc = [0u8; 4];
+                                            if uc.mem_read(rx_tr_ptr, &mut rx_desc).is_ok() {
+                                                let dst_addr = u32::from_le_bytes(rx_desc) as u64;
+                                                if dst_addr != 0 {
+                                                    let _ = uc.mem_write(dst_addr, &rx_data);
+                                                    let rem = ((12800usize.saturating_sub(rx_data.len())) as u32) << 16;
+                                                    uc.get_data_mut().usb.rx_rem_len = rem;
+                                                    let _ = uc.mem_write(SPRD_USB_BASE + 0x1e90, &rem.to_le_bytes());
+
+                                                    uc.get_data_mut().usb.rx_status |= 1 << 18;
+                                                    let rx_st = uc.get_data().usb.rx_status;
+                                                    let _ = uc.mem_write(SPRD_USB_BASE + 0x1e88, &rx_st.to_le_bytes());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if offset == 0x1e84 && (val & 1) != 0 {
+                    // Guest re-armed RX DMA
+                    if uc.get_data().usb.state == UsbState::Connected && !uc.get_data().usb.handshake_drained {
+                        // Empty 0-byte transfer completion to cleanly finish post-connect drain loop
+                        let rem = 12800u32 << 16;
+                        uc.get_data_mut().usb.rx_rem_len = rem;
+                        let _ = uc.mem_write(SPRD_USB_BASE + 0x1e90, &rem.to_le_bytes());
+
+                        uc.get_data_mut().usb.rx_status |= 1 << 18;
+                        let rx_st = uc.get_data().usb.rx_status;
+                        let _ = uc.mem_write(SPRD_USB_BASE + 0x1e88, &rx_st.to_le_bytes());
+                    }
+                } else if offset == 0x1c88 {
+                    let tx_st = uc.get_data().usb.tx_status;
+                    let _ = uc.mem_write(SPRD_USB_BASE + 0x1c88, &tx_st.to_le_bytes());
+                } else if offset == 0x1e88 {
+                    let rx_st = uc.get_data().usb.rx_status;
+                    let _ = uc.mem_write(SPRD_USB_BASE + 0x1e88, &rx_st.to_le_bytes());
+                }
+                true
+            },
+        ).map_err(|e| format!("Failed to add USB write hook: {:?}", e))?;
+
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_USB_BASE,
+            SPRD_USB_BASE + SPRD_USB_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let val = uc.get_data().usb.read_reg(addr as u32);
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add USB read hook: {:?}", e))?;
+
+        // Setup SPRD Keypad Matrix Hooks (0x4025_0000..0x4025_1000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_KEYPAD_BASE,
+            SPRD_KEYPAD_BASE + SPRD_KEYPAD_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_KEYPAD_BASE) as u32;
+                let val = uc.get_data().kpd.read(offset);
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add Keypad read hook: {:?}", e))?;
+
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            SPRD_KEYPAD_BASE,
+            SPRD_KEYPAD_BASE + SPRD_KEYPAD_SIZE as u64,
+            |uc, _mem_type, addr, _size, value| {
+                let offset = (addr - SPRD_KEYPAD_BASE) as u32;
+                let val = (value as u64 & 0xFFFF_FFFF) as u32;
+                uc.get_data_mut().kpd.write(offset, val);
+                true
+            },
+        ).map_err(|e| format!("Failed to add Keypad write hook: {:?}", e))?;
+
+        // Setup SPRD SPI1 Controller Hooks for Display (0x70B0_0000..0x70B0_1000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_APB_SPI1_BASE,
+            SPRD_APB_SPI1_BASE + SPRD_APB_SPI1_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_APB_SPI1_BASE) as u32;
+                let val: u32 = match offset {
+                    0x0000 => {
+                        // SPI TXD / RX FIFO: Return GC9307 ID byte stream (0x00, 0x93, 0x07)
+                        let idx = uc.get_data().display.gc9307.id_read_idx;
+                        let id_bytes = [0x00u32, 0x93u32, 0x07u32];
+                        let ret = id_bytes.get(idx % 3).copied().unwrap_or(0);
+                        uc.get_data_mut().display.gc9307.id_read_idx += 1;
+                        ret
+                    }
+                    0x0028 => 0x0000_0100, // int_raw: bit 8 = 1 (TX_END_IRQ)
+                    0x0034 => 0x0000_0080, // sts2: bit 7 = 1 (TXF_REAL_EMPTY), bit 8 = 0 (not busy), bit 5 = 0 (RX FIFO not empty)
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add SPI1 read hook: {:?}", e))?;
+
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            SPRD_APB_SPI1_BASE,
+            SPRD_APB_SPI1_BASE + SPRD_APB_SPI1_SIZE as u64,
+            |_uc, _mem_type, _addr, _size, _value| {
+                true
+            },
+        ).map_err(|e| format!("Failed to add SPI1 write hook: {:?}", e))?;
+
+        // Setup SPRD LCM Controller Hooks (0x20A0_0000..0x20A0_1000)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            SPRD_LCM_BASE,
+            SPRD_LCM_BASE + SPRD_LCM_SIZE as u64,
+            |uc, _mem_type, addr, size, _value| {
+                let offset = (addr - SPRD_LCM_BASE) as u32;
+                let val: u32 = match offset {
+                    0x0000 => 0, // LCM_CR(0): bit 1 = 0 (LCM not busy)
+                    _ => 0,
+                };
+                let bytes = val.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add LCM read hook: {:?}", e))?;
+
+        // Setup LCM Data Read Hook at 0x6002_0000 (GC9307 LCD ID access fallback)
+        uc.add_mem_hook(
+            HookType::MEM_READ,
+            0x6002_0000,
+            0x6002_1000,
+            |uc, _mem_type, addr, size, _value| {
+                let idx = uc.get_data().display.gc9307.id_read_idx;
+                let id_bytes = [0x00u32, 0x93u32, 0x07u32];
+                let ret = id_bytes.get(idx % 3).copied().unwrap_or(0);
+                uc.get_data_mut().display.gc9307.id_read_idx += 1;
+                let bytes = ret.to_le_bytes();
+                let _ = uc.mem_write(addr, &bytes[..size.min(4)]);
+                true
+            },
+        ).map_err(|e| format!("Failed to add LCM Data read hook: {:?}", e))?;
 
         // Setup Unmapped Trap Read/Write Hook for 0x4000_0000 range
         uc.add_mem_hook(
@@ -911,27 +1124,53 @@ impl T107Vm {
     }
 
     pub fn inject_key(&mut self, key: &str, pressed: bool) -> bool {
-        let ctx = self.uc.get_data_mut();
-        let changed = ctx.kpd.inject_key(key, pressed);
-        if changed && pressed {
-            if (ctx.kpd.int_en & 1) != 0 {
-                ctx.intc.assert_irq(SPRD_IRQ_KPD);
-            }
-            if key == "call" {
-                ctx.in_call = true;
-            } else if key == "end" {
-                ctx.in_call = false;
-                ctx.dial_buffer.clear();
-            } else if ("0"..="9").contains(&key) || key == "*" || key == "#" {
-                if ctx.dial_buffer.len() < 14 {
-                    ctx.dial_buffer.push_str(key);
+        let is_power = matches!(key.to_lowercase().as_str(), "end" | "power" | "clear" | "x");
+        if is_power {
+            let pb_val = if pressed { 0u32 } else { 2u32 };
+            let _ = self.uc.mem_write(0x4060_8280, &pb_val.to_le_bytes());
+        }
+
+        let (changed, int_en, int_raw, key_status) = {
+            let ctx = self.uc.get_data_mut();
+            let changed = ctx.kpd.inject_key(key, pressed);
+            let int_en = ctx.kpd.int_en;
+            let int_raw = ctx.kpd.int_raw;
+            let key_status = ctx.kpd.key_status;
+
+            if changed && pressed {
+                if key == "call" {
+                    ctx.in_call = true;
+                } else if key == "end" {
+                    ctx.in_call = false;
+                    ctx.dial_buffer.clear();
+                } else if ("0"..="9").contains(&key) || key == "*" || key == "#" {
+                    if ctx.dial_buffer.len() < 14 {
+                        ctx.dial_buffer.push_str(key);
+                    }
+                }
+                if ctx.current_stage == Some(BootStage::User) {
+                    ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
                 }
             }
-            if ctx.current_stage == Some(BootStage::User) {
-                ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
-            }
+            (changed, int_en, int_raw, key_status)
+        };
+
+        let _ = self.uc.mem_write(SPRD_KEYPAD_BASE + 0x08, &int_raw.to_le_bytes());
+        let _ = self.uc.mem_write(SPRD_KEYPAD_BASE + 0x2C, &key_status.to_le_bytes());
+
+        if changed && pressed && (int_en & 1) != 0 {
+            self.uc.get_data_mut().intc.assert_irq(SPRD_IRQ_KPD);
         }
+
         changed
+    }
+
+    pub fn get_usb_stdout(&self) -> &[u8] {
+        &self.uc.get_data().usb.stdout_log
+    }
+
+    pub fn set_usb_args(&mut self, args: Vec<String>) {
+        self.uc.get_data_mut().usb.args = args;
     }
 
     pub fn press_key(&mut self, key: &str) -> bool {

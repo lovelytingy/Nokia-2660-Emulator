@@ -128,6 +128,7 @@ pub struct LcdController<const W: usize, const H: usize> {
     pub cur_x: usize,
     pub cur_y: usize,
     pub pixel_byte: Option<u8>,
+    pub id_read_idx: usize,
     pub framebuffer: Box<[[u16; W]; H]>,
 }
 
@@ -150,6 +151,7 @@ impl<const W: usize, const H: usize> LcdController<W, H> {
             cur_x: 0,
             cur_y: 0,
             pixel_byte: None,
+            id_read_idx: 0,
             framebuffer: Box::new([[0u16; W]; H]),
         }
     }

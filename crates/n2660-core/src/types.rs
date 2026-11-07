@@ -49,6 +49,15 @@ pub const SPRD_HW_SFC_SIZE: usize = 0x0001_0000; // 64 KB Hardware Serial Flash 
 pub const SPRD_LCDC_BASE: u64 = 0x2080_0000;
 pub const SPRD_LCDC_SIZE: usize = 0x0000_2000; // 8 KB Display Controller
 
+pub const SPRD_USB_BASE: u64 = 0x2020_0000;
+pub const SPRD_USB_SIZE: usize = 0x0000_2000; // 8 KB USB 2.0 OTG Controller
+
+pub const SPRD_LCM_BASE: u64 = 0x20A0_0000;
+pub const SPRD_LCM_SIZE: usize = 0x0000_1000; // 4 KB LCM Controller
+
+pub const SPRD_APB_SPI1_BASE: u64 = 0x70B0_0000;
+pub const SPRD_APB_SPI1_SIZE: usize = 0x0000_1000; // 4 KB SPI1 Controller
+
 pub const SPRD_AHB_BASE: u64 = 0x20E0_0000;
 pub const SPRD_AHB_SIZE: usize = 0x0000_4000; // 16 KB AHB Clocks & Power
 

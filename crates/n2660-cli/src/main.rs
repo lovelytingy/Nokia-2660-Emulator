@@ -343,6 +343,9 @@ fn main() {
     let step_slice = 50_000;
     let max_duration = std::time::Duration::from_secs(args.timeout);
 
+    let mut key_press_injected = false;
+    let mut key_release_injected = false;
+
     while start_time.elapsed() < max_duration {
         match vm.step(step_slice, 25_000) {
             Ok(_) => {}
@@ -352,6 +355,19 @@ fn main() {
                     break;
                 }
             }
+        }
+
+        let insns = vm.get_instruction_count();
+        if !key_press_injected && insns >= 1_000_000 {
+            for k in &args.keys {
+                vm.press_key(k);
+            }
+            key_press_injected = true;
+        } else if key_press_injected && !key_release_injected && insns >= 3_000_000 {
+            for k in &args.keys {
+                vm.release_key(k);
+            }
+            key_release_injected = true;
         }
 
         let buf = vm.get_uart_tx_buffer();

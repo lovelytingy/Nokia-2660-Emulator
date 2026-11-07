@@ -263,6 +263,61 @@ The Nokia 2660 Flip TA-1480 utilizes a 128 MB (1 Gb) high-speed SPI NAND flash (
 | **11** | DMA Controller | Channel transfer complete |
 | **15** | Software Test IRQ | User / OS IPC software interrupt |
 
+---
+
+## 9. Unisoc T107 USB 2.0 OTG Controller & Libc Server Protocol
+
+- **Base Address**: `0x20200000` (Size: `0x00002000` / 8 KB)
+- **Architecture**: Unisoc USB 2.0 High-Speed OTG controller with hardware DMA endpoints
+- **Hardware Endpoints**:
+  - **Endpoint 5 (EP5) TX**: `0x20201C80` (Descriptor pointer at `+0x14`, Control at `+0x04`, Status at `+0x08`)
+  - **Endpoint 6 (EP6) RX**: `0x20201E80` (Descriptor pointer at `+0x14`, Control at `+0x04`, Status at `+0x08`, Remaining length at `+0x10`)
+
+### Register Map
+| Offset | Register Name | Description | Access |
+| :--- | :--- | :--- | :--- |
+| `+0x1C80` | `USB_EP5_TX_CFG` | EP5 TX Configuration | R/W |
+| `+0x1C84` | `USB_EP5_TX_CTRL` | EP5 DMA Trigger (`bit 0` = 1 triggers transmission) | R/W |
+| `+0x1C88` | `USB_EP5_TX_STATUS` | EP5 DMA Status (`bit 18` = 1 signals DMA complete) | R/W |
+| `+0x1C94` | `USB_EP5_TX_PTR` | Pointer to 8-byte TX DMA descriptor `[src_addr:4, len:2, ctrl:2]` | R/W |
+| `+0x1E80` | `USB_EP6_RX_CFG` | EP6 RX Configuration | R/W |
+| `+0x1E84` | `USB_EP6_RX_CTRL` | EP6 DMA Trigger (`bit 0` = 1 arms RX) | R/W |
+| `+0x1E88` | `USB_EP6_RX_STATUS` | EP6 DMA Status (`bit 18` = 1 signals packet received) | R/W |
+| `+0x1E90` | `USB_EP6_RX_LEN` | RX Remaining Bytes `(12800 - len) << 16` | R/W |
+| `+0x1E94` | `USB_EP6_RX_PTR` | Pointer to 8-byte RX DMA descriptor `[dest_addr:4, len:2, ctrl:2]` | R/W |
+
+### Host Libc Server Protocol
+Used by bare-metal RAM payloads (`keypad_test.bin`, `baremetal_lcd.bin`, `hello_world.bin`, `fpdoom`) to exchange files, standard I/O streams, and runtime arguments with the host workstation over USB.
+
+1. **Checksum Algorithm (`fastchk16`)**:
+   Authentic 16-bit one's complement addition algorithm seeded with `0x5A5A`:
+   ```rust
+   pub fn fastchk16(mut crc: u32, src: &[u8]) -> u16 {
+       let mut i = 0;
+       while i + 1 < src.len() {
+           crc += ((src[i + 1] as u32) << 8) | (src[i] as u32);
+           i += 2;
+       }
+       if i < src.len() { crc += src[i] as u32; }
+       crc = (crc >> 16) + (crc & 0xffff);
+       crc += crc >> 16;
+       (crc & 0xffff) as u16
+   }
+   ```
+2. **Handshake Sequence**:
+   - Guest sends 8-byte FDL ACK frame `[0x7E, 0x00, 0x80, 0x00, 0x00, 0xFF, 0x7F, 0x7E]`.
+   - Host replies with `HOST_CONNECT (0x00)`.
+   - Host services post-connect drain loop and transitions to active libc server mode.
+3. **Command Protocol**:
+   - `CMD_MESSAGE (0x80)`: Diagnostic message exchange.
+   - `CMD_FOPEN (0x81)`: Open embedded virtual files (`pinmap.bin`, `keymap.bin`).
+   - `CMD_FREAD (0x82)`: Read binary slice with 16-bit checksum verification.
+   - `CMD_FWRITE (0x83)`: Guest `printf` / `stdout` output streaming to host console.
+   - `CMD_FCLOSE (0x84)`: Close file handle.
+   - `CMD_FSEEK (0x85)` / `CMD_FTELL (0x86)`: Cursor positioning and length queries.
+   - `CMD_GETARGS (0x87)`: Ingest guest command line arguments (`argc` & `argv`).
+
+
 
 
 

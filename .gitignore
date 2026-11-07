@@ -2,6 +2,7 @@
 *.o
 *.elf
 *.bin
+!crates/n2660-core/src/peripherals/data/*.bin
 *.dis
 *.a
 *.so

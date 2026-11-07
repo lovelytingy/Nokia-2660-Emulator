@@ -124,3 +124,32 @@ When executing vendor firmware in Desktop GUI mode (`--gui`):
   * `PAUSE` / `RESUME`: Freezes execution to inspect memory and registers.
   * `STEP`: Executes single CPU instructions.
   * `RESET`: Reinitializes CPU registers to the boot entry point.
+
+---
+
+## 7. Executing Bare-Metal RAM Payloads (`keypad_test.bin`)
+
+You can execute bare-metal DRAM payloads (from the companion [`Nokia-2660-RE`](https://github.com/lovelytingy/Nokia-2660-RE) repository) directly on N2660Emu. These payloads run at `0x80100000` (entry `0x80100200`) and communicate with the host via the Unisoc USB OTG controller and `libc_server` protocol.
+
+### Running Keypad Test Payload
+```bash
+# Headless run with live serial output (timeout 3 seconds)
+cargo run -p n2660-cli -- ../Nokia-2660-RE/tools/ram_payload/bin/keypad_test.bin --timeout 3
+
+# Inject a specific key (e.g., Key 5) to test matrix scanning and EIC interrupts
+cargo run -p n2660-cli -- ../Nokia-2660-RE/tools/ram_payload/bin/keypad_test.bin --key 5 --timeout 3
+
+# Capture high-resolution 240x320 main display framebuffer to PPM image
+cargo run -p n2660-cli -- ../Nokia-2660-RE/tools/ram_payload/bin/keypad_test.bin --key 5 --screen-dump screen.ppm --timeout 2
+
+# Launch in Native Desktop GUI mode with interactive keypad buttons and live display
+cargo run -p n2660-cli -- ../Nokia-2660-RE/tools/ram_payload/bin/keypad_test.bin --gui
+```
+
+### Features Verified in `keypad_test.bin`:
+* **Heap Allocation**: 64 MB DRAM heap dynamically allocated (`malloc heap: 66017280 bytes`).
+* **USB Libc Protocol**: Loads authentic `pinmap.bin` (2416 B) and `keymap.bin` (128 B) over USB DMA.
+* **GC9307 Identification**: SPI1 controller returns GC9307 ID byte stream (`0x009307`).
+* **Hardware Matrix Scanner**: 5x5 keypad matrix generates real-time keypress events (`DOWN [PRESSED]` / `UP [RELEASED]`).
+* **SC2720 PMIC EIC Channels**: Power/End key (EIC Pin 1) and Key 8 (EIC Pin 9) dedicated interrupt pathways.
+

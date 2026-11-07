@@ -10,6 +10,7 @@ pub mod spi_lcd;
 pub mod sfc;
 pub mod audio;
 pub mod misc;
+pub mod usb;
 
 pub use uart::SprdUart;
 pub use timer::SprdTimer;
@@ -20,3 +21,4 @@ pub use spi_lcd::{SprdDisplaySubsystem, Gc9307Controller, St7735Controller};
 pub use sfc::SprdSfc;
 pub use audio::{SprdAudio, ToneEvent};
 pub use misc::SprdMisc;
+pub use usb::{SprdUsb, UsbState};

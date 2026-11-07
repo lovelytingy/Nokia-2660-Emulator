@@ -10,6 +10,9 @@ pub struct SprdKpd {
     pub clk_div: u32,
     pub status0: u32,
     pub status1: u32,
+    pub key_status: u32,
+    pub last_key_down: bool,
+    pub power_button_down: bool,
 }
 
 impl SprdKpd {
@@ -18,6 +21,51 @@ impl SprdKpd {
     }
 
     pub fn inject_key(&mut self, key: &str, pressed: bool) -> bool {
+        // Handle dedicated PMIC EIC Power / End key
+        if matches!(key.to_lowercase().as_str(), "end" | "power" | "clear" | "x") {
+            self.power_button_down = pressed;
+        }
+
+        // Authentic Nokia 2660 Flip 5x5 Keypad Matrix (col, row)
+        let matrix_coords = match key.to_lowercase().as_str() {
+            "0" => Some((1, 0)),
+            "1" => Some((0, 2)),
+            "2" => Some((1, 2)),
+            "3" => Some((1, 1)),
+            "4" => Some((0, 4)),
+            "5" => Some((1, 4)),
+            "6" => Some((3, 2)),
+            "7" => Some((0, 1)),
+            "8" => Some((2, 2)),
+            "9" => Some((3, 1)),
+            "*" | "star" => Some((0, 0)),
+            "#" | "hash" => Some((3, 0)),
+            "up"   => Some((2, 4)),
+            "down" => Some((1, 3)),
+            "left" => Some((2, 1)),
+            "right"=> Some((3, 3)),
+            "ok" | "enter" | "return" | "select" => Some((2, 3)),
+            "lsk" | "soft1" | "menu"             => Some((4, 0)),
+            "rsk" | "soft2" | "names"            => Some((4, 1)),
+            "back"                               => Some((3, 4)),
+            "call" | "c" | "dial"                => Some((0, 3)),
+            "sos"                                => Some((4, 2)),
+            "vol_up" | "volup" | "+"             => Some((4, 3)),
+            "vol_down" | "voldown" | "-"         => Some((4, 4)),
+            _ => None,
+        };
+
+        if let Some((col, row)) = matrix_coords {
+            self.key_status = ((row as u32) << 4) | (col as u32);
+            if pressed {
+                self.int_raw = 0x01; // Bit 0 = key down
+                self.last_key_down = true;
+            } else {
+                self.int_raw = 0x10; // Bit 4 = key up
+                self.last_key_down = false;
+            }
+        }
+
         let (is_s0, bit) = match key.to_lowercase().as_str() {
             "0" => (true, 0),
             "1" => (true, 1),
@@ -57,10 +105,6 @@ impl SprdKpd {
         } else {
             self.status1 &= !(1 << bit);
         }
-
-        if pressed {
-            self.int_raw |= 0x1;
-        }
         true
     }
 
@@ -75,6 +119,7 @@ impl SprdKpd {
             0x0018 => self.clk_div,
             0x001C => self.status0,
             0x0020 => self.status1,
+            0x002C => self.key_status,
             _ => 0,
         }
     }
