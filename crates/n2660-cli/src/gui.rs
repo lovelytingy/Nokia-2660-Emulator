@@ -283,7 +283,7 @@ pub fn run_desktop_gui(vm: &mut T107Vm, start_closed: bool) -> Result<(), Box<dy
 
         // 3. Step VM execution
         if !paused || step_requested {
-            let _ = vm.step(100_000, 10_000);
+            let _ = vm.step(100_000, 0);
             step_requested = false;
         }
 

@@ -106,63 +106,27 @@ impl T107Vm {
         uc.mem_map(PL011_UART_BASE, PL011_UART_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map PL011 UART at 0x{:X}: {:?}", PL011_UART_BASE, e))?;
 
-        // 5. Map Unmapped Peripheral Trap Window (64 KB at 0x4000_0000)
-        uc.mem_map(TRAP_BASE, TRAP_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map Trap window at 0x{:X}: {:?}", TRAP_BASE, e))?;
+        // 5. Map SPRD AHB System Space (32 MB at 0x2000_0000: AHB, LCDC, HW SFC and System Registers)
+        uc.mem_map(SPRD_AHB_SYS_BASE, SPRD_AHB_SYS_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map AHB SYS at 0x{:X}: {:?}", SPRD_AHB_SYS_BASE, e))?;
 
-        // 6. Map SPRD DMC / DDR PHY (64 KB at 0x3000_0000)
+        // 6. Map SPRD DMC / DDR PHY (2 MB at 0x3000_0000)
         uc.mem_map(SPRD_DMC_BASE, SPRD_DMC_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map DMC at 0x{:X}: {:?}", SPRD_DMC_BASE, e))?;
 
-        // 7. Map SPRD Boot Debug UART (4 KB at 0x7010_0000)
-        uc.mem_map(SPRD_DEBUG_UART_BASE, SPRD_DEBUG_UART_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map Debug UART at 0x{:X}: {:?}", SPRD_DEBUG_UART_BASE, e))?;
+        // 7. Map Unisoc T107 AON / APB Peripheral Space (8 MB at 0x4000_0000)
+        uc.mem_map(TRAP_BASE, TRAP_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map AON / APB at 0x{:X}: {:?}", TRAP_BASE, e))?;
 
-        // 8. Map SPRD AON System Timer (4 KB at 0x4023_0000)
-        uc.mem_map(SPRD_SYSTIMER_BASE, SPRD_SYSTIMER_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map SYSTIMER at 0x{:X}: {:?}", SPRD_SYSTIMER_BASE, e))?;
+        // 8. Map SPRD APB Peripheral Space (32 MB at 0x7000_0000: Debug UART, Clock Gates, APB)
+        uc.mem_map(SPRD_APB_PERIPH_BASE, SPRD_APB_PERIPH_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map APB Peripherals at 0x{:X}: {:?}", SPRD_APB_PERIPH_BASE, e))?;
 
-        // 9. Map SPRD Hardware SFC (64 KB at 0x21A0_0000)
-        uc.mem_map(SPRD_HW_SFC_BASE, SPRD_HW_SFC_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map HW SFC at 0x{:X}: {:?}", SPRD_HW_SFC_BASE, e))?;
-
-        // 10. Map SPRD Display Controller (8 KB at 0x2080_0000)
-        uc.mem_map(SPRD_LCDC_BASE, SPRD_LCDC_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map LCDC at 0x{:X}: {:?}", SPRD_LCDC_BASE, e))?;
-
-        // 11. Map SPRD AHB Clock & Power (16 KB at 0x20E0_0000)
-        uc.mem_map(SPRD_AHB_BASE, SPRD_AHB_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map AHB at 0x{:X}: {:?}", SPRD_AHB_BASE, e))?;
-
-        // 12. Map SPRD Keypad Matrix (4 KB at 0x4025_0000)
-        uc.mem_map(SPRD_KEYPAD_BASE, SPRD_KEYPAD_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map Keypad at 0x{:X}: {:?}", SPRD_KEYPAD_BASE, e))?;
-
-        // 13. Map SPRD AON Pinmux (8 KB at 0x402A_0000)
-        uc.mem_map(SPRD_AON_PINMUX_BASE, SPRD_AON_PINMUX_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map AON Pinmux at 0x{:X}: {:?}", SPRD_AON_PINMUX_BASE, e))?;
-
-        // 14. Map SPRD Secure Boot & System Control (16 KB at 0x402E_0000)
-        uc.mem_map(SPRD_SECURE_BOOT_BASE, SPRD_SECURE_BOOT_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map Secure Boot at 0x{:X}: {:?}", SPRD_SECURE_BOOT_BASE, e))?;
-
-        // 15. Map SPRD PMIC ADI Base (8 KB at 0x4060_0000)
-        uc.mem_map(SPRD_PMIC_ADI_BASE, SPRD_PMIC_ADI_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map PMIC ADI Base at 0x{:X}: {:?}", SPRD_PMIC_ADI_BASE, e))?;
-
-        // 16. Map SPRD PMIC EIC & APB (16 KB at 0x4060_8000)
-        uc.mem_map(SPRD_PMIC_EIC_BASE, SPRD_PMIC_EIC_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map PMIC EIC at 0x{:X}: {:?}", SPRD_PMIC_EIC_BASE, e))?;
-
-        // 17. Map SPRD APB Clock Gates (4 KB at 0x7130_0000)
-        uc.mem_map(SPRD_APB_CLK_BASE, SPRD_APB_CLK_SIZE as u64, Prot::ALL)
-            .map_err(|e| format!("Failed to map APB Clock at 0x{:X}: {:?}", SPRD_APB_CLK_BASE, e))?;
-
-        // 18. Map SPRD ADI Controller (8 KB at 0xA160_0000)
+        // 9. Map SPRD ADI Controller (8 KB at 0xA160_0000)
         uc.mem_map(SPRD_ADI_CTRL_BASE, SPRD_ADI_CTRL_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map ADI Controller at 0x{:X}: {:?}", SPRD_ADI_CTRL_BASE, e))?;
 
-        // 19. Map SPRD Analog Die Window (8 KB at 0xA161_0000)
+        // 10. Map SPRD Analog Die Window (8 KB at 0xA161_0000)
         uc.mem_map(SPRD_ADI_ANALOG_BASE, SPRD_ADI_ANALOG_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map ADI Analog Window at 0x{:X}: {:?}", SPRD_ADI_ANALOG_BASE, e))?;
 
@@ -181,15 +145,15 @@ impl T107Vm {
                     let is_open = ctx.gpio.is_flip_open();
                     let new_stage = if addr == 0x0000_6400 {
                         Some(BootStage::Boot0)
-                    } else if addr == 0x8010_0200 {
+                    } else if (addr >= 0x8010_0000 && addr < 0x8020_0000) && ctx.current_stage == Some(BootStage::Boot0) {
                         Some(BootStage::Boot1)
-                    } else if addr == 0x80a0_6000 || addr == 0x80a0_61f0 {
+                    } else if ((addr >= 0x80a0_0000 && addr < 0x8300_0000) || (addr >= 0x8000_0000 && addr < 0x8010_0000)) && ctx.current_stage == Some(BootStage::Boot1) {
                         Some(BootStage::Kernel)
-                    } else if addr == 0x8847_9F6F {
+                    } else if addr >= 0x8800_0000 {
                         Some(BootStage::User)
                     } else if ctx.current_stage == Some(BootStage::Kernel) {
                         ctx.kernel_insn_count += 1;
-                        if ctx.kernel_insn_count >= 250_000 {
+                        if ctx.kernel_insn_count >= 150_000 {
                             Some(BootStage::User)
                         } else {
                             None
@@ -216,6 +180,7 @@ impl T107Vm {
             if let Some((stg, is_open)) = stage_update {
                 let ctx = uc.get_data_mut();
                 let pct = stg.progress_pct();
+                println!("[BOOT PROGRESS] Boot stage advanced: {:?} ({}%) at PC 0x{:08X}", stg, pct, addr);
                 match stg {
                     BootStage::Boot0 => {
                         ctx.display.gc9307.render_boot_stage(BootStage::Boot0, "LPDDR2 & IRAM 0x00006200 Ready", pct);
@@ -922,7 +887,10 @@ impl T107Vm {
         if (cpsr & 0x20) != 0 {
             pc |= 1;
         }
-        match self.uc.emu_start(pc, 0xFFFF_FFFF, timeout_us, count) {
+        // Avoid spawning background timer thread when instruction count is specified,
+        // preventing race conditions with Apple JIT write-protection (uc->nested assertion).
+        let effective_timeout = if count > 0 { 0 } else { timeout_us };
+        match self.uc.emu_start(pc, 0xFFFF_FFFF, effective_timeout, count) {
             Ok(_) => Ok(true),
             Err(e) => {
                 let err_str = format!("{:?}", e);

@@ -25,11 +25,17 @@ pub const MMIO_SIZE: usize = 0x0010_0000; // 1 MB
 pub const PL011_UART_BASE: u64 = 0x0900_0000;
 pub const PL011_UART_SIZE: usize = 0x1000; // 4 KB
 
+pub const SPRD_AHB_SYS_BASE: u64 = 0x2000_0000;
+pub const SPRD_AHB_SYS_SIZE: usize = 32 * 1024 * 1024; // 32 MB AHB, LCDC, HW SFC and System Registers (0x2000_0000..0x2200_0000)
+
 pub const TRAP_BASE: u64 = 0x4000_0000;
-pub const TRAP_SIZE: usize = 0x0001_0000; // 64 KB
+pub const TRAP_SIZE: usize = 8 * 1024 * 1024; // 8 MB AON Peripheral & Control Window (0x4000_0000..0x4080_0000)
 
 pub const SPRD_DMC_BASE: u64 = 0x3000_0000;
-pub const SPRD_DMC_SIZE: usize = 0x0001_0000; // 64 KB DDR Controller & PHY
+pub const SPRD_DMC_SIZE: usize = 2 * 1024 * 1024; // 2 MB DDR Controller & PHY (0x3000_0000..0x3020_0000)
+
+pub const SPRD_APB_PERIPH_BASE: u64 = 0x7000_0000;
+pub const SPRD_APB_PERIPH_SIZE: usize = 32 * 1024 * 1024; // 32 MB APB Peripherals (0x7000_0000..0x7200_0000)
 
 pub const SPRD_DEBUG_UART_BASE: u64 = 0x7010_0000;
 pub const SPRD_DEBUG_UART_SIZE: usize = 0x0000_1000; // 4 KB Boot Debug UART
