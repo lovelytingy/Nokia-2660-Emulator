@@ -407,8 +407,22 @@ pub fn run_desktop_gui(vm: &mut T107Vm, start_closed: bool) -> Result<(), Box<dy
         draw_text(&mut buf, 525, 148, &format!("Speed: {:.2} MIPS | Insns: {}", mips, total_insns), 0x0078FF80, 1);
         draw_text(&mut buf, 525, 168, &format!("Hall Sensor: Pin 0 = {} ({})", if flip_open { "1" } else { "0" }, if flip_open { "OPEN" } else { "CLOSED" }), 0x00FFD54F, 1);
         draw_text(&mut buf, 740, 168, &format!("Active Key: {}", pressed_key.unwrap_or("NONE")), 0x00FFD54F, 1);
-        draw_text(&mut buf, 525, 188, "INTC Lines : IRQ 0..31 Ready | Software IRQ Vectors Active", 0x00B0BEC5, 1);
-        draw_text(&mut buf, 525, 208, "Audio DAC  : 1000 Hz Tone Buzzer & PCM FIFO Synced", 0x00B0BEC5, 1);
+
+        let stage_str = match vm.get_boot_stage() {
+            Some(n2660_core::types::BootStage::Boot0) => "Stage 1: BOOT0 SPL (IRAM)",
+            Some(n2660_core::types::BootStage::Boot1) => "Stage 2: BOOT1 / LK (DRAM)",
+            Some(n2660_core::types::BootStage::Kernel) => "Stage 3: MOCOR RTOS Kernel",
+            Some(n2660_core::types::BootStage::User) => "Stage 4: Userland MS_MMI_Main",
+            None => "Direct / Standalone Execution",
+        };
+        draw_text(&mut buf, 525, 188, &format!("Boot Stage : {}", stage_str), 0x0000E5FF, 1);
+
+        let fb_mode = if vm.has_custom_framebuffer() {
+            "LCDC DMA / SPI1 Hardware Active"
+        } else {
+            "Boot Progression & Telemetry"
+        };
+        draw_text(&mut buf, 525, 208, &format!("Display Mode: {}", fb_mode), 0x00B0BEC5, 1);
 
         // Live Serial Console Box (UART0)
         draw_rect(&mut buf, 515, 245, 455, 595, 0x00080B10);

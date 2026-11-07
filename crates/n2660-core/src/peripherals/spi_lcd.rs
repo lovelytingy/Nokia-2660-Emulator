@@ -129,6 +129,7 @@ pub struct LcdController<const W: usize, const H: usize> {
     pub cur_y: usize,
     pub pixel_byte: Option<u8>,
     pub id_read_idx: usize,
+    pub has_custom_framebuffer: bool,
     pub framebuffer: Box<[[u16; W]; H]>,
 }
 
@@ -152,6 +153,7 @@ impl<const W: usize, const H: usize> LcdController<W, H> {
             cur_y: 0,
             pixel_byte: None,
             id_read_idx: 0,
+            has_custom_framebuffer: false,
             framebuffer: Box::new([[0u16; W]; H]),
         }
     }
@@ -174,6 +176,7 @@ impl<const W: usize, const H: usize> LcdController<W, H> {
                 let pixel = ((hi as u16) << 8) | (val as u16);
                 if self.cur_y < H && self.cur_x < W {
                     self.framebuffer[self.cur_y][self.cur_x] = pixel;
+                    self.has_custom_framebuffer = true;
                 }
                 self.cur_x += 1;
                 if self.cur_x > self.col_end || self.cur_x >= W {
@@ -246,6 +249,9 @@ pub type St7735Controller = LcdController<ST7735_WIDTH, ST7735_HEIGHT>;
 
 impl Gc9307Controller {
     pub fn render_boot_stage(&mut self, stage: BootStage, sub_status: &str, pct: u32) {
+        if self.has_custom_framebuffer {
+            return;
+        }
         // Deep authentic Nokia blue background
         self.fill_rect(0, 0, GC9307_WIDTH, GC9307_HEIGHT, COLOR_NOKIA_BLUE);
 
@@ -282,15 +288,19 @@ impl Gc9307Controller {
             }
             BootStage::Kernel => {
                 self.draw_text(16, 133, "[STAGE 3/4] MOCOR 20A RTOS KERNEL", COLOR_GREEN, COLOR_DARK_NAVY, 1);
-                self.draw_text(16, 153, "* CP15 SCTLR / Banked Stacks: OK", COLOR_WHITE, COLOR_DARK_NAVY, 1);
-                self.draw_text(16, 171, "* C Runtime __scatterload Done", COLOR_LIGHT_GRAY, COLOR_DARK_NAVY, 1);
-                self.draw_text(16, 189, "* ThreadX Preemptive Scheduler Active", COLOR_CYAN, COLOR_DARK_NAVY, 1);
-                self.draw_text(16, 207, "* Launching Task 0x15: MS_MMI_Main...", COLOR_YELLOW, COLOR_DARK_NAVY, 1);
-                self.draw_text(16, 225, sub_status, COLOR_WHITE, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 151, "* CP15 SCTLR & Banked Stacks: OK", COLOR_WHITE, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 169, "* C Runtime __scatterload Done", COLOR_LIGHT_GRAY, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 187, "* ThreadX Preemptive Scheduler: OK", COLOR_CYAN, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 205, "* Task Manager: MS_MMI_Main Ready", COLOR_YELLOW, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 223, sub_status, COLOR_WHITE, COLOR_DARK_NAVY, 1);
             }
             BootStage::User => {
-                self.render_mmi_home("", false, 0);
-                return;
+                self.draw_text(16, 133, "[STAGE 4/4] USERLAND MMI FRAMEWORK", COLOR_CYAN, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 153, "* MS_MMI_Main Application Started", COLOR_WHITE, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 171, "* UI Window Manager Initialized", COLOR_LIGHT_GRAY, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 189, "* Cellular VoLTE / SIM Stack Active", COLOR_GREEN, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 207, "* Awaiting Framebuffer Presentation", COLOR_YELLOW, COLOR_DARK_NAVY, 1);
+                self.draw_text(16, 225, sub_status, COLOR_WHITE, COLOR_DARK_NAVY, 1);
             }
         }
 

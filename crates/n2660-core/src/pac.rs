@@ -201,13 +201,16 @@ impl PacArchive {
                     u32::from_le_bytes([rec[1556], rec[1557], rec[1558], rec[1559]]) as usize
                 } else { 0 };
 
-                if off_1552 > 0 && off_1552 < bytes.len() {
+                // Data payload starts after the header and record table (at least 2048 bytes)
+                let min_valid_offset = 2048;
+
+                if off_1552 >= min_valid_offset && off_1552 < bytes.len() {
                     let sz = u32::from_le_bytes([rec[1540], rec[1541], rec[1542], rec[1543]]) as usize;
                     let flag = u32::from_le_bytes([rec[1544], rec[1545], rec[1546], rec[1547]]);
                     let addr_num = if rec.len() >= 1564 { u32::from_le_bytes([rec[1560], rec[1561], rec[1562], rec[1563]]) } else { 0 };
                     let laddr = if rec.len() >= 1568 && addr_num > 0 { u32::from_le_bytes([rec[1564], rec[1565], rec[1566], rec[1567]]) } else { 0 };
                     (sz, flag, off_1552, laddr)
-                } else if off_1556 > 0 && off_1556 < bytes.len() {
+                } else if off_1556 >= min_valid_offset && off_1556 < bytes.len() {
                     let lo_size = u32::from_le_bytes([rec[1540], rec[1541], rec[1542], rec[1543]]) as u64;
                     let hi_size = u32::from_le_bytes([rec[1544], rec[1545], rec[1546], rec[1547]]) as u64;
                     let sz = (lo_size | (hi_size << 32)) as usize;
@@ -216,8 +219,7 @@ impl PacArchive {
                     let laddr = if rec.len() >= 1572 && addr_num > 0 { u32::from_le_bytes([rec[1568], rec[1569], rec[1570], rec[1571]]) } else { 0 };
                     (sz, flag, off_1556, laddr)
                 } else {
-                    let sz = u32::from_le_bytes([rec[1540], rec[1541], rec[1542], rec[1543]]) as usize;
-                    (sz, 0, 0, 0)
+                    (0, 0, 0, 0)
                 }
             };
 

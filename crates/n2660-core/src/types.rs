@@ -13,8 +13,8 @@ pub const DRAM_EXT_SIZE: usize = 16 * 1024 * 1024; // 16 MB extended (completing
 pub const USER_DRAM_BASE: u64 = 0x8800_0000;
 pub const USER_DRAM_SIZE: usize = 32 * 1024 * 1024; // 32 MB userland application DRAM window
 
-pub const SYS_HEAP_BASE: u64 = 0x7E00_0000;
-pub const SYS_HEAP_SIZE: usize = 32 * 1024 * 1024; // 32 MB ThreadX Task Stack & Dynamic Heap Window
+pub const SYS_HEAP_BASE: u64 = 0x7800_0000;
+pub const SYS_HEAP_SIZE: usize = 128 * 1024 * 1024; // 128 MB ThreadX Task Stack & Dynamic Heap Window (0x7800_0000..0x8000_0000)
 
 pub const FLASH_DIRECT_BASE: u64 = 0x6000_0000;
 pub const FLASH_DIRECT_SIZE: usize = 128 * 1024 * 1024; // 128 MB
@@ -29,13 +29,16 @@ pub const SPRD_AHB_SYS_BASE: u64 = 0x2000_0000;
 pub const SPRD_AHB_SYS_SIZE: usize = 32 * 1024 * 1024; // 32 MB AHB, LCDC, HW SFC and System Registers (0x2000_0000..0x2200_0000)
 
 pub const TRAP_BASE: u64 = 0x4000_0000;
-pub const TRAP_SIZE: usize = 8 * 1024 * 1024; // 8 MB AON Peripheral & Control Window (0x4000_0000..0x4080_0000)
+pub const TRAP_SIZE: usize = 16 * 1024 * 1024; // 16 MB AON Peripheral & Control Window (0x4000_0000..0x4100_0000)
 
 pub const SPRD_DMC_BASE: u64 = 0x3000_0000;
-pub const SPRD_DMC_SIZE: usize = 2 * 1024 * 1024; // 2 MB DDR Controller & PHY (0x3000_0000..0x3020_0000)
+pub const SPRD_DMC_SIZE: usize = 16 * 1024 * 1024; // 16 MB DDR Controller & PHY (0x3000_0000..0x3100_0000)
 
 pub const SPRD_APB_PERIPH_BASE: u64 = 0x7000_0000;
 pub const SPRD_APB_PERIPH_SIZE: usize = 32 * 1024 * 1024; // 32 MB APB Peripherals (0x7000_0000..0x7200_0000)
+
+pub const HIGH_VECTORS_BASE: u64 = 0xFFFF_0000;
+pub const HIGH_VECTORS_SIZE: usize = 64 * 1024; // 64 KB ARM High Exception Vectors Window
 
 pub const SPRD_DEBUG_UART_BASE: u64 = 0x7010_0000;
 pub const SPRD_DEBUG_UART_SIZE: usize = 0x0000_1000; // 4 KB Boot Debug UART

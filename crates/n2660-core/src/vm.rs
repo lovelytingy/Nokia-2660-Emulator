@@ -34,6 +34,7 @@ pub struct VmContext {
     pub dial_buffer: String,
     pub in_call: bool,
     pub kernel_insn_count: u64,
+    pub pending_unmapped_page: Option<u64>,
 }
 
 pub struct T107Vm {
@@ -62,6 +63,7 @@ impl T107Vm {
             dial_buffer: String::new(),
             in_call: false,
             kernel_insn_count: 0,
+            pending_unmapped_page: None,
         };
 
         let mut uc = Unicorn::new_with_data(Arch::ARM, Mode::ARM, ctx)
@@ -132,6 +134,10 @@ impl T107Vm {
         uc.mem_map(SPRD_ADI_ANALOG_BASE, SPRD_ADI_ANALOG_SIZE as u64, Prot::ALL)
             .map_err(|e| format!("Failed to map ADI Analog Window at 0x{:X}: {:?}", SPRD_ADI_ANALOG_BASE, e))?;
 
+        // 11. Map ARM High Exception Vectors (64 KB at 0xFFFF_0000)
+        uc.mem_map(HIGH_VECTORS_BASE, HIGH_VECTORS_SIZE as u64, Prot::ALL)
+            .map_err(|e| format!("Failed to map High Vectors at 0x{:X}: {:?}", HIGH_VECTORS_BASE, e))?;
+
         // Initialize PMIC EIC Power Key register in memory (0x40608280) to 2 (bit 1 = 1: Power key released)
         let _ = uc.mem_write(0x4060_8280, &2u32.to_le_bytes());
 
@@ -154,16 +160,12 @@ impl T107Vm {
                         Some(BootStage::Boot1)
                     } else if ((addr >= 0x80a0_0000 && addr < 0x8300_0000) || (addr >= 0x8000_0000 && addr < 0x8010_0000)) && ctx.current_stage == Some(BootStage::Boot1) {
                         Some(BootStage::Kernel)
-                    } else if addr >= 0x8800_0000 {
+                    } else if addr >= 0x8800_0000 && ctx.current_stage == Some(BootStage::Kernel) {
                         Some(BootStage::User)
-                    } else if ctx.current_stage == Some(BootStage::Kernel) {
-                        ctx.kernel_insn_count += 1;
-                        if ctx.kernel_insn_count >= 150_000 {
-                            Some(BootStage::User)
-                        } else {
-                            None
-                        }
                     } else {
+                        if ctx.current_stage == Some(BootStage::Kernel) {
+                            ctx.kernel_insn_count += 1;
+                        }
                         None
                     };
 
@@ -186,23 +188,32 @@ impl T107Vm {
                 let ctx = uc.get_data_mut();
                 let pct = stg.progress_pct();
                 println!("[BOOT PROGRESS] Boot stage advanced: {:?} ({}%) at PC 0x{:08X}", stg, pct, addr);
-                match stg {
-                    BootStage::Boot0 => {
-                        ctx.display.gc9307.render_boot_stage(BootStage::Boot0, "LPDDR2 & IRAM 0x00006200 Ready", pct);
-                        ctx.display.st7735.render_cover_screen(Some(BootStage::Boot0), is_open);
+                if !ctx.display.gc9307.has_custom_framebuffer {
+                    match stg {
+                        BootStage::Boot0 => {
+                            ctx.display.gc9307.render_boot_stage(BootStage::Boot0, "LPDDR2 & IRAM 0x00006200 Ready", pct);
+                            ctx.display.st7735.render_cover_screen(Some(BootStage::Boot0), is_open);
+                        }
+                        BootStage::Boot1 => {
+                            ctx.display.gc9307.render_boot_stage(BootStage::Boot1, "SCI FTL Mounted -> Verifying Kernel...", pct);
+                            ctx.display.st7735.render_cover_screen(Some(BootStage::Boot1), is_open);
+                        }
+                        BootStage::Kernel => {
+                            ctx.display.gc9307.render_boot_stage(BootStage::Kernel, "ThreadX Preemptive Scheduler Active", pct);
+                            ctx.display.st7735.render_cover_screen(Some(BootStage::Kernel), is_open);
+                        }
+                        BootStage::User => {
+                            ctx.display.gc9307.render_boot_stage(BootStage::User, "Userland MS_MMI_Main Active", pct);
+                            ctx.display.st7735.render_cover_screen(Some(BootStage::User), is_open);
+                        }
                     }
-                    BootStage::Boot1 => {
-                        ctx.display.gc9307.render_boot_stage(BootStage::Boot1, "SCI FTL Mounted -> Verifying Kernel...", pct);
-                        ctx.display.st7735.render_cover_screen(Some(BootStage::Boot1), is_open);
-                    }
-                    BootStage::Kernel => {
-                        ctx.display.gc9307.render_boot_stage(BootStage::Kernel, "ThreadX Preemptive Scheduler Active", pct);
-                        ctx.display.st7735.render_cover_screen(Some(BootStage::Kernel), is_open);
-                    }
-                    BootStage::User => {
-                        ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
-                        ctx.display.st7735.render_cover_screen(Some(BootStage::User), is_open);
-                    }
+                }
+            } else {
+                let ctx = uc.get_data_mut();
+                if ctx.current_stage == Some(BootStage::Kernel) && ctx.kernel_insn_count > 0 && ctx.kernel_insn_count % 250_000 == 0 && !ctx.display.gc9307.has_custom_framebuffer {
+                    let insn_k = ctx.kernel_insn_count / 1_000;
+                    let status = format!("* Exec: {}k insns | PC: 0x{:08X}", insn_k, addr);
+                    ctx.display.gc9307.render_boot_stage(BootStage::Kernel, &status, 75);
                 }
             }
 
@@ -525,19 +536,39 @@ impl T107Vm {
                         let mut y_base_bytes = [0u8; 4];
                         if uc.mem_read(SPRD_LCDC_BASE + 0x24, &mut y_base_bytes).is_ok() {
                             let y_base = u32::from_le_bytes(y_base_bytes);
-                            let fb_addr = (y_base as u64) << 2;
-                            if fb_addr >= DRAM_BASE {
-                                let mut fb_data = vec![0u8; GC9307_WIDTH * GC9307_HEIGHT * 2];
-                                if uc.mem_read(fb_addr, &mut fb_data).is_ok() {
-                                    let ctx = uc.get_data_mut();
-                                    for y in 0..GC9307_HEIGHT {
-                                        for x in 0..GC9307_WIDTH {
-                                            let idx = (y * GC9307_WIDTH + x) * 2;
-                                            let pixel = u16::from_le_bytes([fb_data[idx], fb_data[idx + 1]]);
-                                            ctx.display.gc9307.framebuffer[y][x] = pixel;
-                                        }
+                            let raw_y = y_base as u64;
+                            let fb_addr = if raw_y >= 0x7000_0000 && raw_y < 0x9000_0000 {
+                                raw_y
+                            } else if (raw_y << 2) >= 0x7000_0000 && (raw_y << 2) < 0x9000_0000 {
+                                raw_y << 2
+                            } else {
+                                raw_y
+                            };
+                            let mut size_xy_bytes = [0u8; 4];
+                            let (width, height) = if uc.mem_read(SPRD_LCDC_BASE + 0x2C, &mut size_xy_bytes).is_ok() {
+                                let sxy = u32::from_le_bytes(size_xy_bytes);
+                                let w = (sxy & 0xFFFF) as usize;
+                                let h = ((sxy >> 16) & 0xFFFF) as usize;
+                                if w > 0 && h > 0 && w <= GC9307_WIDTH && h <= GC9307_HEIGHT {
+                                    (w, h)
+                                } else {
+                                    (GC9307_WIDTH, GC9307_HEIGHT)
+                                }
+                            } else {
+                                (GC9307_WIDTH, GC9307_HEIGHT)
+                            };
+                            let byte_len = width * height * 2;
+                            let mut fb_data = vec![0u8; byte_len];
+                            if uc.mem_read(fb_addr, &mut fb_data).is_ok() {
+                                let ctx = uc.get_data_mut();
+                                for y in 0..height {
+                                    for x in 0..width {
+                                        let idx = (y * width + x) * 2;
+                                        let pixel = u16::from_le_bytes([fb_data[idx], fb_data[idx + 1]]);
+                                        ctx.display.gc9307.framebuffer[y][x] = pixel;
                                     }
                                 }
+                                ctx.display.gc9307.has_custom_framebuffer = true;
                             }
                         }
                         // Set Refresh Done status (bit 0 = 1) at 0x2080_011C
@@ -854,7 +885,22 @@ impl T107Vm {
             HookType::MEM_WRITE,
             SPRD_APB_SPI1_BASE,
             SPRD_APB_SPI1_BASE + SPRD_APB_SPI1_SIZE as u64,
-            |_uc, _mem_type, _addr, _size, _value| {
+            |uc, _mem_type, addr, _size, value| {
+                let offset = (addr - SPRD_APB_SPI1_BASE) as u32;
+                let val = (value as u64 & 0xFFFF_FFFF) as u32;
+                if offset == 0x0000 {
+                    let is_data = uc.get_data().display.gc9307.dc_mode;
+                    let byte_val = (val & 0xFF) as u8;
+                    let ctx = uc.get_data_mut();
+                    if !is_data && (byte_val == 0x2A || byte_val == 0x2B || byte_val == 0x2C || byte_val == 0x00) {
+                        ctx.display.gc9307.write_cmd(byte_val);
+                    } else {
+                        ctx.display.gc9307.write_data(byte_val);
+                    }
+                } else if offset == 0x0044 {
+                    let is_data = (val & (1 << 15)) != 0;
+                    uc.get_data_mut().display.gc9307.dc_mode = is_data;
+                }
                 true
             },
         ).map_err(|e| format!("Failed to add SPI1 write hook: {:?}", e))?;
@@ -892,7 +938,28 @@ impl T107Vm {
             },
         ).map_err(|e| format!("Failed to add LCM Data read hook: {:?}", e))?;
 
-        // Setup Unmapped Trap Read/Write Hook for 0x4000_0000 range
+        // Setup LCM Data Write Hook at 0x6002_0000
+        uc.add_mem_hook(
+            HookType::MEM_WRITE,
+            0x6002_0000,
+            0x6002_1000,
+            |uc, _mem_type, addr, _size, value| {
+                let offset = (addr - 0x6002_0000) as u32;
+                let val = (value as u64 & 0xFFFF_FFFF) as u32;
+                let ctx = uc.get_data_mut();
+                if offset == 0x0000 {
+                    ctx.display.gc9307.write_cmd((val & 0xFF) as u8);
+                } else {
+                    ctx.display.gc9307.write_data((val & 0xFF) as u8);
+                    if (val >> 8) != 0 {
+                        ctx.display.gc9307.write_data(((val >> 8) & 0xFF) as u8);
+                    }
+                }
+                true
+            },
+        ).map_err(|e| format!("Failed to add LCM Data write hook: {:?}", e))?;
+
+        // Setup Unmapped Trap Read/Write Hook
         uc.add_mem_hook(
             HookType::MEM_READ_UNMAPPED | HookType::MEM_WRITE_UNMAPPED,
             0,
@@ -900,20 +967,20 @@ impl T107Vm {
             |uc, mem_type, addr, size, value| {
                 let pc = uc.reg_read(RegisterARM::PC).unwrap_or(0);
                 let page = addr & !0xFFF;
-                let _ = uc.mem_map(page, 0x1000, Prot::ALL);
                 let is_new = uc.get_data_mut().logged_traps.insert(addr as u32);
                 if mem_type == MemType::READ_UNMAPPED {
                     if is_new {
-                        println!("\n[N2660Emu MMIO TRAP] Auto-mapped page at 0x{:08X} for unmapped READ at 0x{:08X} (size {}) from PC 0x{:08X}", page, addr, size, pc);
+                        println!("\n[N2660Emu MMIO TRAP] Unmapped READ at 0x{:08X} (size {}) from PC 0x{:08X}", addr, size, pc);
                         println!("[INFO] Unmapped MMIO read returned: 0x00000000\n");
                     }
-                    let _ = uc.mem_write(addr, &vec![0u8; size]);
                 } else {
                     if is_new {
-                        println!("\n[N2660Emu MMIO TRAP] Auto-mapped page at 0x{:08X} for unmapped WRITE at 0x{:08X} (val 0x{:08X}, size {}) from PC 0x{:08X}\n", page, addr, value as u32, size, pc);
+                        println!("\n[N2660Emu MMIO TRAP] Unmapped WRITE at 0x{:08X} (val 0x{:08X}, size {}) from PC 0x{:08X}\n", addr, value as u32, size, pc);
                     }
                 }
-                true
+                // Record page to map safely outside JIT execution (prevents Apple Silicon assertion failure)
+                uc.get_data_mut().pending_unmapped_page = Some(page);
+                false
             },
         ).map_err(|e| format!("Failed to add TRAP hook: {:?}", e))?;
 
@@ -1071,7 +1138,7 @@ impl T107Vm {
                 ctx.display.gc9307.render_boot_stage(BootStage::Kernel, "ThreadX Preemptive Scheduler Active", pct);
             }
             BootStage::User => {
-                ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
+                ctx.display.gc9307.render_boot_stage(BootStage::User, "Userland MS_MMI_Main Active", pct);
             }
         }
         ctx.display.st7735.render_cover_screen(Some(stage), is_open);
@@ -1107,6 +1174,10 @@ impl T107Vm {
             Ok(_) => Ok(true),
             Err(e) => {
                 let err_str = format!("{:?}", e);
+                if let Some(page) = self.uc.get_data_mut().pending_unmapped_page.take() {
+                    let _ = self.uc.mem_map(page, 0x1000, Prot::ALL);
+                    return Ok(true);
+                }
                 if err_str.contains("TIMEOUT") || err_str.contains("OK") {
                     Ok(true)
                 } else {
@@ -1148,7 +1219,7 @@ impl T107Vm {
                         ctx.dial_buffer.push_str(key);
                     }
                 }
-                if ctx.current_stage == Some(BootStage::User) {
+                if ctx.current_stage.is_none() {
                     ctx.display.gc9307.render_mmi_home(&ctx.dial_buffer, ctx.in_call, 0);
                 }
             }
@@ -1198,6 +1269,14 @@ impl T107Vm {
 
     pub fn get_st7735_framebuffer(&self) -> &[[u16; ST7735_WIDTH]; ST7735_HEIGHT] {
         &self.uc.get_data().display.st7735.framebuffer
+    }
+
+    pub fn get_boot_stage(&self) -> Option<BootStage> {
+        self.uc.get_data().current_stage
+    }
+
+    pub fn has_custom_framebuffer(&self) -> bool {
+        self.uc.get_data().display.gc9307.has_custom_framebuffer
     }
 
     pub fn get_pc(&self) -> u32 {
