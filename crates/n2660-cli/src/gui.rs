@@ -473,7 +473,7 @@ pub fn run_desktop_gui(
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
-        if window.is_key_down(Key::R) {
+        if screenshot_path.is_none() && window.is_key_down(Key::R) {
             let _ = vm.init_cpu(vm.entry_point);
             paused = false;
             std::thread::sleep(std::time::Duration::from_millis(150));
@@ -780,7 +780,9 @@ pub fn run_desktop_gui(
         // 3. Step VM execution
         if !paused || step_requested {
             let step_budget = if screenshot_path.is_some() { 500_000 } else { 250_000 };
-            let _ = vm.step(step_budget, 0);
+            if let Err(e) = vm.step(step_budget, 0) {
+                eprintln!("[GUI VM STEP ERROR] {}", e);
+            }
             step_requested = false;
             if !vm.is_flip_open() {
                 vm.transfer_main_to_sub();

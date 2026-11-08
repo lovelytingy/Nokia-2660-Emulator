@@ -22,6 +22,7 @@ build/
 extracted_fw/
 extracted_pac/
 firmware_dumps/
+device-dump/
 *.pac
 
 # OS files
