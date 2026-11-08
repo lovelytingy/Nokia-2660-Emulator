@@ -53,10 +53,10 @@ Before running, you can inspect the partition map and header metadata using [`bi
 
 ## 4. Multi-Stage Booting with N2660Emu
 
-N2660Emu natively ingests downloaded `.PAC` files directly, auto-detects `v23_update_Nokia_2660.pac` in the workspace when no file is specified, and supports multi-stage boot selection via the `--stage` flag:
+N2660Emu natively auto-detects and runs authentic physical device partition dumps (`device-dump/` copied from `Nokia-2660-RE/firmware/dumps/ta1480_10.02.17.00/`) and vendor `.PAC` containers (`v23_update_Nokia_2660.pac`). Physical device partition dumps are prioritized by default over `.PAC` containers because `.PAC` update archives contain OTA/FOTA update agents (`rsupdate`) rather than pure runtime firmware images.
 
 ```bash
-# 1. Native Desktop GUI (auto-detects PAC, boots in order, renders live on LCD)
+# 1. Native Desktop GUI (auto-detects device-dump or PAC, boots in order, renders live on LCD)
 cargo run -p n2660-cli -- --gui
 
 # 2. Cold boot through all stages in order (BOOT0 -> BOOT1 -> Kernel -> MMI)
@@ -70,6 +70,10 @@ cargo run -p n2660-cli -- --stage kernel --timeout 10
 
 # 5. Boot directly into Userland Application Framework (MS_MMI_Main at 0x88479F6F)
 cargo run -p n2660-cli -- --stage user --timeout 10
+
+# 6. Explicitly specify device dump directory or force PAC
+cargo run -p n2660-cli -- --dump device-dump --gui
+cargo run -p n2660-cli -- --prefer-pac --gui
 ```
 
 ### Live LCD Display Progression Across Stages:

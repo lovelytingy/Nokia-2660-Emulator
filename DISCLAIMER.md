@@ -34,3 +34,11 @@
 - **No Proprietary Firmware Included:** This repository does **not** contain, distribute, or host any proprietary firmware binaries, BootROM images, bootloaders (`FDL1`, `FDL2`, `BOOT0`, `BOOT1`), kernel binaries, or operating system code (`MOCOR`).
 - **User-Supplied Firmware Model:** Users who wish to run or test proprietary software on this emulator must legally obtain and extract their own firmware dumps from hardware they lawfully possess.
 - The maintainers of this project do not provide assistance in obtaining copyrighted firmware images through unauthorized channels.
+
+---
+
+## 5. Platform Compatibility & Windows Disclaimer
+
+- **Supported Platforms**: N2660Emu is developed and supported exclusively on **Linux** and **macOS**.
+- **No Windows Support**: We do not provide, promise, or guarantee compatibility, support, or bug fixes for native Windows operating systems. Any requests for Windows assistance or issue tickets concerning Windows errors will be **respectfully declined**.
+- **User Self-Reliance**: Users running Windows who wish to use the software are expected to research and configure their own execution environment (such as via WSL2) independently without assistance from project maintainers.

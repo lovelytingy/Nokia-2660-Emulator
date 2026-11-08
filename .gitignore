@@ -3,6 +3,8 @@
 *.elf
 *.bin
 !crates/n2660-core/src/peripherals/data/*.bin
+!roms/bootrom.bin
+!tests/baremetal/*.bin
 *.dis
 *.a
 *.so

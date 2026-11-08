@@ -287,6 +287,14 @@ pub fn copy_to_clipboard(text: &str) -> bool {
                 return true;
             }
         }
+        if let Ok(mut child) = Command::new("xsel").args(["--clipboard", "--input"]).stdin(Stdio::piped()).spawn() {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            if child.wait().is_ok() {
+                return true;
+            }
+        }
     }
 
     #[cfg(target_os = "windows")]

@@ -7,10 +7,22 @@ RUST_BIN = target/release/n2660emu-rs
 all: firmware bootrom rust
 
 firmware:
-	$(MAKE) -C tests/baremetal
+	@if command -v arm-none-eabi-gcc >/dev/null 2>&1; then \
+		$(MAKE) -C tests/baremetal; \
+	elif [ -f tests/baremetal/test_firmware.bin ]; then \
+		echo "[N2660Emu] arm-none-eabi-gcc not found; using existing tests/baremetal/test_firmware.bin"; \
+	else \
+		echo "[N2660Emu] Notice: arm-none-eabi-gcc not found. Install gcc-arm-none-eabi (Linux) or arm-none-eabi-gcc (macOS) to recompile baremetal payloads."; \
+	fi
 
 bootrom:
-	$(MAKE) -C roms
+	@if command -v arm-none-eabi-gcc >/dev/null 2>&1; then \
+		$(MAKE) -C roms; \
+	elif [ -f roms/bootrom.bin ]; then \
+		echo "[N2660Emu] arm-none-eabi-gcc not found; using existing roms/bootrom.bin"; \
+	else \
+		echo "[N2660Emu] Notice: arm-none-eabi-gcc not found. Install gcc-arm-none-eabi (Linux) or arm-none-eabi-gcc (macOS) to recompile cleanroom BootROM."; \
+	fi
 
 rust:
 	$(CARGO) build --release

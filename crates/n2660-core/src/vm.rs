@@ -92,7 +92,11 @@ impl T107Vm {
             last_log_count: 0,
             osa_heap_ptr: 0x82D0_0000,
             mmi_res_data: {
-                if let Ok(d) = std::fs::read("extracted_pac/mmi_res_240X320_MH.bin") {
+                if let Ok(d) = std::fs::read("device-dump/mmi_res.bin") {
+                    d
+                } else if let Ok(d) = std::fs::read("../Nokia-2660-RE/firmware/dumps/ta1480_10.02.17.00/mmi_res.bin") {
+                    d
+                } else if let Ok(d) = std::fs::read("extracted_pac/mmi_res_240X320_MH.bin") {
                     d
                 } else if let Ok(d) = std::fs::read("extracted_fw/mmi_res_240X320_MH.bin") {
                     d
@@ -1035,10 +1039,11 @@ impl T107Vm {
             }
 
             // BOOT1 handoff & FTL interception:
-            // 0x801136E0: SCI_FTL_Load(dev_id)
-            // 0x80100C24: load_kernel()
-            // 0x80113CA4: SCI_FTL_Unload(dev_id)
-            if addr == 0x8011_36E0 {
+            // 0x801136E0 (PAC) / 0x80104ABE (Dump): SCI_FTL_Load(dev_id)
+            // 0x80100C24 (PAC) / 0x8010065C (Dump): load_kernel()
+            // 0x80113CA4 (PAC) / 0x80104BF8 (Dump): SCI_FTL_Unload(dev_id)
+            // 0x80101C82 (Dump): verify_kernel()
+            if addr == 0x8011_36E0 || addr == 0x8010_4ABE {
                 let _ = uc.mem_write(0x8057_1AF0, &2u32.to_le_bytes()); // device state = 2 (LOADED)
                 let _ = uc.mem_write(0x8057_1B00, &2048u32.to_le_bytes()); // sector size
                 let _ = uc.mem_write(0x8057_1B04, &64u32.to_le_bytes()); // erase unit
@@ -1050,7 +1055,7 @@ impl T107Vm {
                 let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
                 let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
                 let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
-            } else if addr == 0x8010_0C24 {
+            } else if addr == 0x8010_0C24 || addr == 0x8010_065C {
                 println!("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
                 let uart = &mut uc.get_data_mut().uart;
                 uart.push_log_str("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
@@ -1062,9 +1067,16 @@ impl T107Vm {
                 let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
                 let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
                 let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
-            } else if addr == 0x8011_3CA4 {
+            } else if addr == 0x8011_3CA4 || addr == 0x8010_4BF8 {
                 let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
                 let _ = uc.reg_write(RegisterARM::R0, 0); // r0 = 0 (success)
+                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            } else if addr == 0x8010_1C82 {
+                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                let _ = uc.reg_write(RegisterARM::R0, 1); // r0 = 1 (success)
                 let _ = uc.reg_write(RegisterARM::PC, lr & !1);
                 let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
                 let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
@@ -2170,6 +2182,185 @@ impl T107Vm {
         // Default boot entry priority: BOOT0 (cold boot SPL) > Kernel > default_entry
         self.set_boot_stage(BootStage::Boot0);
         Ok(pac_boot_entry.or(kernel_entry).or(Some(default_entry)))
+    }
+
+    pub fn load_dump(
+        &mut self,
+        dump_dir: &std::path::Path,
+        default_entry: u64,
+    ) -> Result<Option<u64>, String> {
+        let base_dir = if dump_dir.join("boot0.bin").exists() || dump_dir.join("kernel.bin").exists() {
+            dump_dir.to_path_buf()
+        } else if dump_dir.join("ta1480_10.02.17.00/boot0.bin").exists() {
+            dump_dir.join("ta1480_10.02.17.00")
+        } else {
+            dump_dir.to_path_buf()
+        };
+
+        println!("[DUMP] Loading authentic device partition dump from '{}'...", base_dir.display());
+
+        let mut dump_boot_entry: Option<u64> = None;
+        let mut kernel_entry: Option<u64> = None;
+
+        // 1. BOOT0 SPL (SRAM 0x00006200 & SPI NAND Block 0)
+        let boot0_names = ["boot0.bin", "boot0", "spl.bin"];
+        for name in &boot0_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    println!("[DUMP] Staging BOOT0/SPL partition '{}' ({} bytes) into SPI NAND Block 0 & SRAM", name, data.len());
+                    let chunk_len = data.len().min(2048);
+                    self.uc.get_data_mut().sfc.write_page(0, 0, &data[..chunk_len]);
+                    let _ = self.load_bytes(&data, FLASH_DIRECT_BASE);
+                    let _ = self.load_bytes(&data, 0x0000_6200);
+
+                    let is_dhtb = data.len() > 512 && &data[0..4] == b"DHTB";
+                    if is_dhtb {
+                        dump_boot_entry = Some(0x0000_6400);
+                    } else if let Ok(hdr) = SprdHeader::parse(&data) {
+                        if data.len() > 32 {
+                            let _ = self.load_bytes(&data[32..], hdr.load_addr as u64);
+                        }
+                        dump_boot_entry = Some(hdr.entry_point as u64);
+                    } else {
+                        dump_boot_entry = Some(0x0000_6200);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // 2. BOOT1 Secondary Bootloader / LK (High DRAM 0x80100000)
+        let boot1_names = ["boot1.bin", "boot1", "lk.bin"];
+        for name in &boot1_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    println!("[DUMP] Staging BOOT1/LK partition '{}' ({} bytes) at 0x80100000", name, data.len());
+                    let _ = self.load_bytes(&data, 0x8010_0000);
+                    break;
+                }
+            }
+        }
+
+        // 3. Kernel / MOCOR OS (High DRAM 0x80a05e00, entry 0x80a06000)
+        let kernel_names = ["kernel.bin", "boot.bin", "kernelimg.bin", "EXEC_KERNEL_IMAGE.bin"];
+        for name in &kernel_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    let load_addr = 0x80a0_5e00u64;
+                    let entry = 0x80a0_6000u64;
+                    println!("[DUMP] Staging Kernel/Boot partition '{}' ({} bytes) at 0x{:08X}", name, data.len(), load_addr);
+                    self.load_bytes(&data, load_addr)?;
+                    kernel_entry = Some(entry);
+                    break;
+                }
+            }
+        }
+
+        // 4. Userland Framework / MS_MMI_Main (User DRAM 0x88000000)
+        let user_names = ["user.bin", "userimg.bin", "system.bin", "EXEC_USER_IMAGE.bin"];
+        for name in &user_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    let load_addr = 0x8800_0000u64;
+                    println!("[DUMP] Staging UserImg partition '{}' ({} bytes) at 0x{:08X}", name, data.len(), load_addr);
+                    self.load_bytes(&data, load_addr)?;
+                    break;
+                }
+            }
+        }
+
+        // 5. MMI Resources & Boot Splashes (SFC offset 0x01B00000 & Direct Flash)
+        let mmi_names = ["mmi_res.bin", "mmires.bin", "mmi_res_240X320_MH.bin"];
+        for name in &mmi_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    println!("[DUMP] Staging MMIRes partition '{}' ({} bytes) into SPI NAND at offset 0x01B0_0000", name, data.len());
+                    self.uc.get_data_mut().sfc.load_partition(0x01B0_0000, &data);
+                    self.uc.get_data_mut().mmi_res_data = data.clone();
+                    let _ = self.load_bytes(&data, FLASH_DIRECT_BASE + 0x01B0_0000);
+
+                    // Extract authentic boot splashes from MMIRes sres0001 container
+                    if data.len() > 0x140 && &data[0..8] == b"sres0001" {
+                        let e0_off = u32::from_le_bytes([data[0x120], data[0x121], data[0x122], data[0x123]]) as usize;
+                        let e0_sz = u32::from_le_bytes([data[0x124], data[0x125], data[0x126], data[0x127]]) as usize;
+                        if e0_off + e0_sz <= data.len() {
+                            let splash_bytes = &data[e0_off..e0_off + e0_sz];
+                            if self.uc.get_data_mut().display.gc9307.load_splash(splash_bytes) {
+                                println!("[DUMP] Loaded authentic Nokia QVGA 240x320 boot splash into GC9307 LCD ({} bytes)", e0_sz);
+                            }
+                        }
+
+                        let e1_off = u32::from_le_bytes([data[0x12C], data[0x12D], data[0x12E], data[0x12F]]) as usize;
+                        let e1_sz = u32::from_le_bytes([data[0x130], data[0x131], data[0x132], data[0x133]]) as usize;
+                        if e1_off + e1_sz <= data.len() {
+                            let sub_splash_bytes = &data[e1_off..e1_off + e1_sz];
+                            if self.uc.get_data_mut().display.st7735.load_splash(sub_splash_bytes) {
+                                println!("[DUMP] Loaded authentic Nokia QQVGA 128x160 sub-display boot splash into ST7735 LCD ({} bytes)", e1_sz);
+                            }
+                        }
+                    } else if data.len() >= 14 && &data[0..2] == b"BM" {
+                        let _ = self.uc.get_data_mut().display.gc9307.load_splash(&data);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // 6. NVRAM & Calibration Items (SFC offset 0x01A00000)
+        let nv_names = ["nvitem.bin", "nv.bin", "prodnv.bin"];
+        for name in &nv_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    println!("[DUMP] Staging NV partition '{}' ({} bytes) into SPI NAND at offset 0x01A0_0000", name, data.len());
+                    self.uc.get_data_mut().sfc.load_partition(0x01A0_0000, &data);
+                    break;
+                }
+            }
+        }
+
+        // 7. Power Management Cortex-M4 Coprocessor
+        let pm_names = ["pm_cm4.bin", "PM_nemol_cm4.bin"];
+        for name in &pm_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    println!("[DUMP] Staging PM CM4 partition '{}' ({} bytes)", name, data.len());
+                    break;
+                }
+            }
+        }
+
+        // 8. Cellular DSPs (LTE & GSM)
+        let lte_names = ["lte_dsp.bin", "T117_CAT1_LTEA_DSP.bin"];
+        for name in &lte_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    println!("[DUMP] Staging LTE DSP partition '{}' ({} bytes)", name, data.len());
+                    break;
+                }
+            }
+        }
+        let gsm_names = ["gsm_dsp.bin", "NEMOL_CAT1_EVS_DM_DSP.bin"];
+        for name in &gsm_names {
+            let p = base_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    println!("[DUMP] Staging GSM DSP partition '{}' ({} bytes)", name, data.len());
+                    break;
+                }
+            }
+        }
+
+        // Default boot entry priority: BOOT0 (cold boot SPL) > Kernel > default_entry
+        self.set_boot_stage(BootStage::Boot0);
+        Ok(dump_boot_entry.or(kernel_entry).or(Some(default_entry)))
     }
 
     pub fn set_boot_stage(&mut self, stage: BootStage) {

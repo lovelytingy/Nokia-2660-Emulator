@@ -53,14 +53,75 @@ The goal of this project is to understand and emulate the phone's hardware envir
 
 ## Quick Start
 
-### Prerequisites
-- **Host OS**: macOS (Apple Silicon or Intel) or Linux.
-- **Toolchains**: Rust (`rustc` & `cargo` 1.75+) and ARM GNU toolchain (`arm-none-eabi-gcc`).
+### Supported Operating Systems
+* **Linux**: Fully supported (Ubuntu, Debian, Fedora, Arch Linux, and derivative distros with X11/Wayland).
+* **macOS**: Fully supported (Apple Silicon M1/M2/M3/M4 & Intel x86_64).
 
+> [!IMPORTANT]
+> **Windows Compatibility Notice**:
+> This project is designed, built, and maintained exclusively for **Linux** and **macOS**. We do **not** provide any support, troubleshooting, bug fixes, or compatibility assurances for Windows. Issues, bug reports, and pull requests relating to native Windows compilation, pathing, or execution will be **respectfully declined and closed**.
+> 
+> If you are on Windows and wish to run N2660Emu, you are welcome to research and set it up on your own. The recommended and easiest path is to use **WSL2 (Windows Subsystem for Linux)** with an Ubuntu environment and WSLg / X11 display forwarding.
+
+---
+
+### Prerequisites & Installation
+
+#### 1. Linux Setup
+
+##### Debian / Ubuntu / Linux Mint / Pop!_OS
 ```bash
-# macOS (Homebrew)
-brew install qemu arm-none-eabi-gcc rust
+# Install core build dependencies, CMake (for Unicorn), and X11 graphics libraries (for GUI)
+sudo apt update && sudo apt install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    libx11-dev \
+    libxcursor-dev \
+    libxrandr-dev \
+    libxi-dev \
+    libxinerama-dev \
+    libxkbcommon-dev \
+    python3 \
+    xclip
+
+# Optional: ARM cross-compiler (only required if recompiling baremetal test payloads)
+sudo apt install -y gcc-arm-none-eabi binutils-arm-none-eabi
+
+# Install Rust toolchain (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
 ```
+
+##### Fedora / RHEL
+```bash
+sudo dnf install -y \
+    gcc gcc-c++ make cmake pkgconf \
+    libX11-devel libXcursor-devel libXrandr-devel libXi-devel libXinerama-devel libxkbcommon-devel \
+    python3 xclip arm-none-eabi-gcc-cs arm-none-eabi-newlib
+
+# Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+##### Arch Linux / Manjaro
+```bash
+sudo pacman -S --needed \
+    base-devel cmake pkg-config \
+    libx11 libxcursor libxrandr libxi libxinerama libxkbcommon \
+    python xclip arm-none-eabi-gcc arm-none-eabi-newlib rustup
+
+rustup default stable
+```
+
+#### 2. macOS Setup (Apple Silicon & Intel)
+```bash
+# Install dependencies via Homebrew
+brew install rust cmake arm-none-eabi-gcc
+```
+
+---
 
 ### Essential Commands
 
@@ -71,10 +132,10 @@ make
 # Run baremetal hardware verification payload
 make run
 
-# Launch native Desktop GUI with Nokia 2660 physical skin & live PAC multi-stage boot
+# Launch native Desktop GUI with Nokia 2660 physical skin & live boot progression
 cargo run -p n2660-cli -- --gui
-# Or shorthand:
-make gui
+# Or shorthand launcher:
+./bin/n2660emu --gui
 
 # Launch interactive real-time terminal TUI
 make interactive

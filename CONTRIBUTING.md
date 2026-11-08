@@ -47,3 +47,13 @@ By submitting a pull request or patch, you certify that:
 1. The contribution was created in whole or in part by you, and you have the right to submit it under the MIT License; or
 2. The contribution is based on existing open-source work that is documented with a compatible open-source license; and
 3. You have not violated any non-disclosure agreements, proprietary software licenses, or copyright protections in creating this contribution.
+
+---
+
+## 5. Supported Platforms & Windows Policy
+
+- **Primary Supported Platforms**: **Linux** (Debian/Ubuntu, Fedora, Arch Linux, etc.) and **macOS** (Apple Silicon M-series and Intel x86_64).
+- **Windows Policy (Unsupported)**:
+  - This project does **not** provide compatibility, official support, or troubleshooting for native Windows environments.
+  - Pull requests adding Windows-specific workarounds or issues requesting Windows support will be **respectfully declined and closed**.
+  - Windows users who wish to run N2660Emu must research and configure their own setup independently (e.g., via WSL2 with WSLg / X11 GUI display server). Maintainers will not provide guidance or support for Windows setups.

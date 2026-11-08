@@ -109,6 +109,14 @@ struct Args {
     #[arg(long)]
     pac: Option<PathBuf>,
 
+    /// Path to authentic hardware partition dump directory (e.g. device-dump)
+    #[arg(long)]
+    dump: Option<PathBuf>,
+
+    /// Force using .PAC firmware archive even if a hardware dump folder is detected
+    #[arg(long)]
+    prefer_pac: bool,
+
     /// Simulate BootROM BSL handshake over UART0 when loading FDL1
     #[arg(long)]
     bsl: bool,
@@ -166,76 +174,118 @@ fn main() {
         }
     }
 
-    // Handle .PAC archive if provided explicitly (--pac) or passed as positional FIRMWARE argument
+    // Check for authentic device dump directory (--dump or auto-detect or positional directory)
     let fdl1_file = args.fdl1.clone();
     let fdl2_file = args.fdl2.clone();
     let mut firmware_target = args.firmware.clone();
+    let mut dump_boot_entry: Option<u64> = None;
     let mut pac_boot_entry: Option<u64> = None;
 
-    let pac_path_opt = args.pac.clone().or_else(|| {
-        if let Some(fw) = &firmware_target {
-            if fw.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("pac")) {
-                return Some(fw.clone());
-            }
-            return None; // Explicit binary given, do not auto-detect PAC
-        }
-        // Auto-detect PAC in current working directory or known RE locations
-        let default_pac = PathBuf::from("v23_update_Nokia_2660.pac");
-        if default_pac.exists() {
-            println!("[N2660Emu] Auto-detected Nokia 2660 PAC container: {:?}", default_pac);
-            return Some(default_pac);
-        }
-        let re_pac = PathBuf::from("../Nokia-2660-RE/firmware/v23_update_Nokia_2660.pac");
-        if re_pac.exists() {
-            println!("[N2660Emu] Auto-detected Nokia 2660 PAC container from RE repo: {:?}", re_pac);
-            return Some(re_pac);
-        }
+    let dump_dir_opt = if args.prefer_pac {
         None
-    });
-
-    if let Some(pac_path) = pac_path_opt {
-        if let Ok(data) = std::fs::read(&pac_path) {
-            if let Ok(pac) = PacArchive::parse(&data) {
-                println!("[PAC] Parsing vendor firmware container '{:?}' ({} partitions)...", pac_path, pac.files.len());
-                println!("[PAC] Product: {} ({}) | Flash Type: {}", pac.product_name, pac.product_version, pac.flash_type);
-                match vm.load_pac(&pac, args.fdl1_addr, args.fdl2_addr, args.entry) {
-                    Ok(entry_opt) => {
-                        pac_boot_entry = entry_opt;
-                    }
-                    Err(e) => {
-                        eprintln!("[PAC] Error staging firmware partitions: {}", e);
-                    }
+    } else {
+        args.dump.clone().or_else(|| {
+            if let Some(fw) = &firmware_target {
+                if fw.is_dir() {
+                    return Some(fw.clone());
                 }
+            }
+            // Auto-detect authentic device dump in current working directory or known RE locations
+            let local_dump = PathBuf::from("device-dump");
+            if local_dump.exists() && (local_dump.join("boot0.bin").exists() || local_dump.join("kernel.bin").exists()) {
+                println!("[N2660Emu] Auto-detected Nokia 2660 device partition dump: {:?}", local_dump);
+                return Some(local_dump);
+            }
+            let re_dump = PathBuf::from("../Nokia-2660-RE/firmware/dumps/ta1480_10.02.17.00");
+            if re_dump.exists() && re_dump.join("boot0.bin").exists() {
+                println!("[N2660Emu] Auto-detected Nokia 2660 device dump from RE repo: {:?}", re_dump);
+                return Some(re_dump);
+            }
+            None
+        })
+    };
+
+    if let Some(dump_path) = dump_dir_opt {
+        match vm.load_dump(&dump_path, args.entry) {
+            Ok(entry_opt) => {
+                dump_boot_entry = entry_opt;
                 firmware_target = None;
+            }
+            Err(e) => {
+                eprintln!("[DUMP] Error staging device dump partitions: {}", e);
             }
         }
     }
 
-    // Apply --stage entry override when booting from PAC
-    if pac_boot_entry.is_some() {
+    // Handle .PAC archive if dump was not loaded or explicitly requested
+    if dump_boot_entry.is_none() {
+        let pac_path_opt = args.pac.clone().or_else(|| {
+            if let Some(fw) = &firmware_target {
+                if fw.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("pac")) {
+                    return Some(fw.clone());
+                }
+                return None; // Explicit binary given, do not auto-detect PAC
+            }
+            // Auto-detect PAC in current working directory or known RE locations
+            let default_pac = PathBuf::from("v23_update_Nokia_2660.pac");
+            if default_pac.exists() {
+                println!("[N2660Emu] Auto-detected Nokia 2660 PAC container: {:?}", default_pac);
+                return Some(default_pac);
+            }
+            let re_pac = PathBuf::from("../Nokia-2660-RE/firmware/v23_update_Nokia_2660.pac");
+            if re_pac.exists() {
+                println!("[N2660Emu] Auto-detected Nokia 2660 PAC container from RE repo: {:?}", re_pac);
+                return Some(re_pac);
+            }
+            None
+        });
+
+        if let Some(pac_path) = pac_path_opt {
+            if let Ok(data) = std::fs::read(&pac_path) {
+                if let Ok(pac) = PacArchive::parse(&data) {
+                    println!("[PAC] Parsing vendor firmware container '{:?}' ({} partitions)...", pac_path, pac.files.len());
+                    println!("[PAC] Product: {} ({}) | Flash Type: {}", pac.product_name, pac.product_version, pac.flash_type);
+                    match vm.load_pac(&pac, args.fdl1_addr, args.fdl2_addr, args.entry) {
+                        Ok(entry_opt) => {
+                            pac_boot_entry = entry_opt;
+                        }
+                        Err(e) => {
+                            eprintln!("[PAC] Error staging firmware partitions: {}", e);
+                        }
+                    }
+                    firmware_target = None;
+                }
+            }
+        }
+    }
+
+    let mut staged_boot_entry = dump_boot_entry.or(pac_boot_entry);
+
+    // Apply --stage entry override when booting from Dump or PAC
+    if staged_boot_entry.is_some() {
         if args.entry != 0x8000_0000 {
             println!("[ENTRY] Using explicit entry address: 0x{:08X}", args.entry);
-            pac_boot_entry = Some(args.entry);
+            staged_boot_entry = Some(args.entry);
         } else {
             match args.stage.to_lowercase().as_str() {
                 "boot0" => {
                     println!("[STAGE] Multi-Stage Order: Starting from Stage 1: BOOT0 SPL (0x00006400)");
-                    pac_boot_entry = Some(0x0000_6400);
+                    staged_boot_entry = Some(0x0000_6400);
                     vm.set_boot_stage(n2660_core::types::BootStage::Boot0);
                 }
                 "boot1" => {
                     println!("[STAGE] Selected Stage: Stage 2: BOOT1 Secondary Bootloader (0x80100200)");
-                    pac_boot_entry = Some(0x8010_0200);
+                    staged_boot_entry = Some(0x8010_0200);
                     vm.set_boot_stage(n2660_core::types::BootStage::Boot1);
                 }
                 "kernel" => {
                     println!("[STAGE] Selected Stage: Stage 3: MOCOR OS Kernel (0x80a06000)");
-                    pac_boot_entry = Some(0x80a0_6000);
+                    staged_boot_entry = Some(0x80a0_6000);
                     vm.set_boot_stage(n2660_core::types::BootStage::Kernel);
                 }
                 "user" => {
                     println!("[STAGE] Selected Stage: Stage 4: Userland Application Framework MS_MMI_Main (0x88479F6F)");
-                    pac_boot_entry = Some(0x8847_9F6F);
+                    staged_boot_entry = Some(0x8847_9F6F);
                     vm.set_boot_stage(n2660_core::types::BootStage::User);
                 }
                 other => {
@@ -292,8 +342,8 @@ fn main() {
     if args.bootrom {
         println!("[BootROM] Reset vector configured at 0x00000000");
         let _ = vm.set_entry_point(0x0000_0000);
-    } else if let Some(entry) = pac_boot_entry {
-        println!("[PAC] Configuring execution entry point at 0x{:08X}", entry);
+    } else if let Some(entry) = staged_boot_entry {
+        println!("[BOOT] Configuring execution entry point at 0x{:08X}", entry);
         let _ = vm.set_entry_point(entry);
     } else if let Some(fw_path) = &firmware_target {
         if let Ok(data) = std::fs::read(fw_path) {
