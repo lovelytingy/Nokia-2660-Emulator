@@ -4,6 +4,7 @@
 [![Target: Unisoc T107](https://img.shields.io/badge/SoC-Unisoc%20T107%20%2F%20UMS9117-orange.svg)](#target-hardware-specifications)
 [![Arch: ARM Cortex-A7](https://img.shields.io/badge/CPU-ARM%20Cortex--A7%20(ARMv7--A)-red.svg)](#target-hardware-specifications)
 [![Engine: Rust Native](https://img.shields.io/badge/Engine-Rust%20(Native)-brightgreen.svg)](docs/RUST_ENGINE.md)
+[![Target OS: OpenFeatureOS](https://img.shields.io/badge/Target%20OS-OpenFeatureOS-9cf.svg)](https://github.com/lovelytingy/OpenFeatureOS)
 
 <a href="https://buymeacoffee.com/lovelytingy"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="32"></a>
 
@@ -13,7 +14,7 @@ An open-source hardware emulation and reverse-engineering environment for the **
   <img src="ss-gui.png" alt="Nokia 2660 Flip Native Desktop Host GUI (Model TA-1480, Unisoc T107)" width="880">
 </p>
 
-The goal of this project is to understand and emulate the phone's hardware environment sufficiently to execute and debug firmware components, investigate the original **MOCOR** RTOS, and support the development of **OpenFeatureOS**.
+The goal of this project is to understand and emulate the phone's hardware environment sufficiently to execute and debug firmware components, investigate the original **MOCOR** RTOS, and serve as the official development and testing platform for [**OpenFeatureOS**](https://github.com/lovelytingy/OpenFeatureOS).
 
 > [!IMPORTANT]
 > **Legal Notice & Non-Affiliation**: This project is an independent open-source research effort and is **not affiliated with, sponsored by, or endorsed by Nokia Corporation, HMD Global Oy, or Unisoc Technologies Co., Ltd.** All trademarks belong to their respective owners. **No proprietary firmware binaries are distributed in this repository.** See [DISCLAIMER.md](DISCLAIMER.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -30,7 +31,7 @@ The goal of this project is to understand and emulate the phone's hardware envir
 | **Storage** | 128 MB SPI NAND Flash (Winbond W25N01GV) with direct XIP (`0x60000000`) |
 | **Displays** | Primary 2.8" QVGA (240×320) GC9307 TFT LCD + Sub 1.77" QQVGA (120×160) ST7735 |
 | **Input / Audio** | SPRD 3×4 Keypad Matrix, GPIO Pin 0 Hall Clamshell Flip Sensor, Audio DAC & Tone Buzzer |
-| **Target OS** | MOCOR RTOS |
+| **Target OS** | MOCOR RTOS / [OpenFeatureOS](https://github.com/lovelytingy/OpenFeatureOS) |
 
 ---
 
@@ -242,7 +243,14 @@ Nokia-2660-Emulator/
 - [x] **Phase 4: BootROM, BSL, PAC Tools, ATAGS & INTC** (Reset vector, BSL framing & CRC16, PAC tools, ARM ATAGS handoff, 32-line INTC & IRQ vectors)
 - [x] **Phase 5: High-Performance Rust Emulation Core & Native Host GUI** (100% Rust workspace, zero-cost FFI, 16+ MIPS, native Desktop GUI with phone skin)
 - [x] **Phase 6: MOCOR OS Bringup & Vendor Firmware Execution** (BOOT0 -> BOOT1 -> MOCOR OS Kernel execution, FTL & LK handoff, LCDC QVGA refresh, bare-metal payload verification)
-- [ ] **Phase 7: OpenFeatureOS Development** (Custom open-source kernel bringup and verification)
+- [ ] **Phase 7: OpenFeatureOS Development** (Custom open-source operating system bringup and hardware driver verification — see [OpenFeatureOS](https://github.com/lovelytingy/OpenFeatureOS))
+
+---
+
+## Ecosystem & Companion Projects
+
+* 🌟 [**OpenFeatureOS**](https://github.com/lovelytingy/OpenFeatureOS): A modern open-source operating system purpose-built for 4G feature phones. N2660Emu provides the primary virtualized testing, emulation, and driver bringup environment for OpenFeatureOS!
+* 🔬 [**Nokia-2660-RE**](https://github.com/lovelytingy/Nokia-2660-RE): Research, hardware partition manifests, BSL dumps, Ghidra database mappings, and bare-metal DRAM payloads for the Nokia 2660 Flip (Model TA-1480).
 
 ---
 

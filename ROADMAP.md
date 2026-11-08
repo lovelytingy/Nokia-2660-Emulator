@@ -18,6 +18,7 @@ flowchart TD
     M5 --> M6["Milestone 6: MOCOR RTOS Kernel (ThreadX Scheduler)"]
     M6 --> M7["Milestone 7: Device Interface (GC9307 / ST7735 / KPD)"]
     M7 --> M8["Milestone 8: Interactive Device (MS_MMI_Main GUI)"]
+    M8 --> M9["Milestone 9: OpenFeatureOS Bringup & Drivers"]
 
     style M1 fill:#1b5e20,stroke:#4caf50,color:#fff
     style M2 fill:#1b5e20,stroke:#4caf50,color:#fff
@@ -27,6 +28,7 @@ flowchart TD
     style M6 fill:#2e7d32,stroke:#81c784,color:#fff
     style M7 fill:#1b5e20,stroke:#4caf50,color:#fff
     style M8 fill:#e65100,stroke:#ff9800,color:#fff
+    style M9 fill:#0d47a1,stroke:#42a5f5,color:#fff
 ```
 
 ---
@@ -108,3 +110,11 @@ flowchart TD
 - [ ] Render full userland MMI UI windows directly from firmware DMA buffers without procedural fallbacks.
 - [ ] Physical phone keypad clicks and keyboard inputs dispatch into MOCOR OS internal message queues.
 - [ ] Persistent storage preserves user settings, contacts, and SMS in emulated SPI NAND flash.
+
+---
+
+### Milestone 9 — OpenFeatureOS Bringup & Drivers
+- [ ] Bootstrap the custom open-source [**OpenFeatureOS**](https://github.com/lovelytingy/OpenFeatureOS) kernel inside N2660Emu.
+- [ ] Provide virtio / UART serial console logging and framebuffer DMA display output for early OpenFeatureOS bringup.
+- [ ] Validate OpenFeatureOS drivers for Unisoc T107 peripherals (INTC, System Timer, GC9307, ST7735, KPD).
+- [ ] Support testing and debugging OpenFeatureOS builds directly on emulated hardware.
