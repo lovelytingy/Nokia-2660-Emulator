@@ -1309,49 +1309,51 @@ impl T107Vm {
                 }
             }
 
-            // BOOT1 handoff & FTL interception:
+            // BOOT1 handoff & FTL interception (only active during multi-stage PAC / Dump boot):
             // 0x801136E0 (PAC) / 0x80104ABE (Dump): SCI_FTL_Load(dev_id)
             // 0x80100C24 (PAC) / 0x8010065C (Dump): load_kernel()
             // 0x80113CA4 (PAC) / 0x80104BF8 (Dump): SCI_FTL_Unload(dev_id)
             // 0x80101C82 (Dump): verify_kernel()
-            if addr == 0x8011_36E0 || addr == 0x8010_4ABE {
-                let _ = uc.mem_write(0x8057_1AF0, &2u32.to_le_bytes()); // device state = 2 (LOADED)
-                let _ = uc.mem_write(0x8057_1B00, &2048u32.to_le_bytes()); // sector size
-                let _ = uc.mem_write(0x8057_1B04, &64u32.to_le_bytes()); // erase unit
-                let _ = uc.mem_write(0x8057_1B08, &1024u32.to_le_bytes()); // total sectors
-                let _ = uc.mem_write(0x8057_1B0C, &1u32.to_le_bytes()); // attrib
-                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
-                let _ = uc.reg_write(RegisterARM::R0, 0); // r0 = 0 (success)
-                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
-                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
-                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
-                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
-            } else if addr == 0x8010_0C24 || addr == 0x8010_065C {
-                println!("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
-                let uart = &mut uc.get_data_mut().uart;
-                uart.push_log_str("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
-                uart.push_log_str("[MOCOR RTOS] Kernel CP15 SCTLR & Banked Stacks: OK");
-                uart.push_log_str("[MOCOR RTOS] ThreadX Preemptive Scheduler active");
-                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
-                let _ = uc.reg_write(RegisterARM::R0, 1); // r0 = 1 (success)
-                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
-                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
-                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
-                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
-            } else if addr == 0x8011_3CA4 || addr == 0x8010_4BF8 {
-                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
-                let _ = uc.reg_write(RegisterARM::R0, 0); // r0 = 0 (success)
-                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
-                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
-                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
-                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
-            } else if addr == 0x8010_1C82 {
-                let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
-                let _ = uc.reg_write(RegisterARM::R0, 1); // r0 = 1 (success)
-                let _ = uc.reg_write(RegisterARM::PC, lr & !1);
-                let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
-                let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
-                let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+            if uc.get_data().current_stage.is_some() {
+                if addr == 0x8011_36E0 || addr == 0x8010_4ABE {
+                    let _ = uc.mem_write(0x8057_1AF0, &2u32.to_le_bytes()); // device state = 2 (LOADED)
+                    let _ = uc.mem_write(0x8057_1B00, &2048u32.to_le_bytes()); // sector size
+                    let _ = uc.mem_write(0x8057_1B04, &64u32.to_le_bytes()); // erase unit
+                    let _ = uc.mem_write(0x8057_1B08, &1024u32.to_le_bytes()); // total sectors
+                    let _ = uc.mem_write(0x8057_1B0C, &1u32.to_le_bytes()); // attrib
+                    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::R0, 0); // r0 = 0 (success)
+                    let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                } else if addr == 0x8010_0C24 || addr == 0x8010_065C {
+                    println!("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
+                    let uart = &mut uc.get_data_mut().uart;
+                    uart.push_log_str("[BOOT1] load_kernel(): KernelImg staged at 0x80a05e00 -> handoff ready");
+                    uart.push_log_str("[MOCOR RTOS] Kernel CP15 SCTLR & Banked Stacks: OK");
+                    uart.push_log_str("[MOCOR RTOS] ThreadX Preemptive Scheduler active");
+                    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::R0, 1); // r0 = 1 (success)
+                    let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                } else if addr == 0x8011_3CA4 || addr == 0x8010_4BF8 {
+                    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::R0, 0); // r0 = 0 (success)
+                    let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                } else if addr == 0x8010_1C82 {
+                    let lr = uc.reg_read(RegisterARM::LR).unwrap_or(0);
+                    let _ = uc.reg_write(RegisterARM::R0, 1); // r0 = 1 (success)
+                    let _ = uc.reg_write(RegisterARM::PC, lr & !1);
+                    let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
+                    let t_bit = if (lr & 1) != 0 { 0x20 } else { 0 };
+                    let _ = uc.reg_write(RegisterARM::CPSR, (cpsr & !0x20) | t_bit);
+                }
             }
 
             if trace_on {
@@ -1376,7 +1378,9 @@ impl T107Vm {
                 let cpsr = uc.reg_read(RegisterARM::CPSR).unwrap_or(0);
                 if (cpsr & 0x80) == 0 {
                     let vector_base = if addr < DRAM_BASE { 0x0000_0000u64 } else { 0x8000_0000u64 };
-                    println!("[IRQ DISPATCH] Pending IRQs: 0x{:08X} at PC: 0x{:08X} (vector: 0x{:08X})", pending, addr, vector_base + 0x18);
+                    if trace_on {
+                        println!("[IRQ DISPATCH] Pending IRQs: 0x{:08X} at PC: 0x{:08X} (vector: 0x{:08X})", pending, addr, vector_base + 0x18);
+                    }
                     let svc_cpsr = cpsr;
                     let irq_cpsr = (svc_cpsr & !0x3F) | 0x12 | 0x80;
                     let _ = uc.reg_write(RegisterARM::CPSR, irq_cpsr);
