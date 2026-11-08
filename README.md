@@ -1,6 +1,7 @@
 # Nokia 2660 Flip Emulator (N2660Emu)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Status: In Development](https://img.shields.io/badge/Status-In%20Development-yellow.svg)](#)
 [![Target: Unisoc T107](https://img.shields.io/badge/SoC-Unisoc%20T107%20%2F%20UMS9117-orange.svg)](#target-hardware-specifications)
 [![Arch: ARM Cortex-A7](https://img.shields.io/badge/CPU-ARM%20Cortex--A7%20(ARMv7--A)-red.svg)](#target-hardware-specifications)
 [![Engine: Rust Native](https://img.shields.io/badge/Engine-Rust%20(Native)-brightgreen.svg)](docs/RUST_ENGINE.md)
@@ -15,6 +16,10 @@ An open-source hardware emulation and reverse-engineering environment for the **
 </p>
 
 The goal of this project is to understand and emulate the phone's hardware environment sufficiently to execute and debug firmware components, investigate the original **MOCOR** RTOS, and serve as the official development and testing platform for [**OpenFeatureOS**](https://github.com/lovelytingy/OpenFeatureOS).
+
+> [!WARNING]
+> **Project Status — Active Development**:
+> This project is currently in **active development**. As hardware reverse-engineering and emulation are ongoing, **some features, peripherals, and components might not work as intended or may be incomplete**. Bugs, missing register behaviors, and breaking changes are expected as development continues. We welcome bug reports, hardware findings, and pull requests!
 
 > [!IMPORTANT]
 > **Legal Notice & Non-Affiliation**: This project is an independent open-source research effort and is **not affiliated with, sponsored by, or endorsed by Nokia Corporation, HMD Global Oy, or Unisoc Technologies Co., Ltd.** All trademarks belong to their respective owners. **No proprietary firmware binaries are distributed in this repository.** See [DISCLAIMER.md](DISCLAIMER.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

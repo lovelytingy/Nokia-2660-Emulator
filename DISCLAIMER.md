@@ -42,3 +42,11 @@
 - **Supported Platforms**: N2660Emu is developed and supported exclusively on **Linux** and **macOS**.
 - **No Windows Support**: We do not provide, promise, or guarantee compatibility, support, or bug fixes for native Windows operating systems. Any requests for Windows assistance or issue tickets concerning Windows errors will be **respectfully declined**.
 - **User Self-Reliance**: Users running Windows who wish to use the software are expected to research and configure their own execution environment (such as via WSL2) independently without assistance from project maintainers.
+
+---
+
+## 6. Project Status & Work-in-Progress Notice
+
+- **Active Development**: N2660Emu is currently under active research and development.
+- **Incomplete Features & Experimental Emulation**: Certain peripheral emulations, registers, and timing models are in varying stages of implementation. As a result, some features or components may not work as intended, crash, or produce incomplete results.
+- **No Warranty**: As outlined in the [LICENSE](LICENSE) (MIT), this software is provided "as is", without warranty of any kind, express or implied.
